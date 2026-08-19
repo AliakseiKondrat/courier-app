@@ -1684,31 +1684,4 @@ function periodLabel(period) {
     default: return '';
   }
 }
-📁 Обновлённый index.html
-html
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <link rel="manifest" href="./manifest.json" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Курьер" />
-  <title>Курьер</title>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: #000000;
-    }
-    input, select, textarea {
-      font-size: 16px !important;
-    }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="module" src="./src/main.jsx"></script>
-</body>
-</html>
+
