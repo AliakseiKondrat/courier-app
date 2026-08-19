@@ -42,12 +42,13 @@ const saveState = (state) => {
 
 // ---------- КОНСТАНТЫ ----------
 const DEFAULT_SETTINGS = {
-  vatRates: { uber: 0.23, bolt: 0.08, stuart: 0, glovo: 0, pyszne: 0 },
   ryczaltRate: 0.085,
   uzRate: 0.277,
   zusFixed: 110,
-  transitionDate: '2026-09-01',
+  transitionDate: '2026-09-01', // Uber Eats
   glovoUZStartDate: '2025-01-01',
+  boltUZStartDate: null, // будущая дата, по умолчанию не активна
+  stuartUZStartDate: null,
   partnerCommissionSingle: 29.90,
   partnerCommissionMulti: 49.90,
   customServices: [],
@@ -90,31 +91,33 @@ const getWeekStart = (dateStr) => {
   return monday.toISOString();
 };
 
-// ---------- НАЛОГИ ----------
-const getBaseNet = (order, settings) => {
-  switch(order.service) {
-    case 'Uber Eats': return order.amount / (1 + settings.vatRates.uber);
-    case 'Bolt Food': return order.amount / (1 + settings.vatRates.bolt);
-    case 'Stuart':
-    case 'Glovo':
-    case 'Pyszne.pl':
-      return order.amount;
-    default:
-      return order.amount;
-  }
+// ---------- НАЛОГИ (упрощённые) ----------
+const getBaseNet = (order) => {
+  // Пользователь всегда вводит сумму после VAT (нетто)
+  return order.amount;
 };
 
 const getTax = (order, settings) => {
-  const baseNet = getBaseNet(order, settings);
+  const baseNet = getBaseNet(order);
   const orderDate = new Date(order.date);
   switch(order.service) {
     case 'Uber Eats': {
       const isBefore = orderDate < new Date(settings.transitionDate);
       return isBefore ? baseNet * settings.ryczaltRate : baseNet * settings.uzRate;
     }
-    case 'Bolt Food':
-    case 'Stuart':
+    case 'Bolt Food': {
+      // Если задана дата перехода и она наступила, используем UZ, иначе Ryczałt
+      if (settings.boltUZStartDate && orderDate >= new Date(settings.boltUZStartDate)) {
+        return baseNet * settings.uzRate;
+      }
       return baseNet * settings.ryczaltRate;
+    }
+    case 'Stuart': {
+      if (settings.stuartUZStartDate && orderDate >= new Date(settings.stuartUZStartDate)) {
+        return baseNet * settings.uzRate;
+      }
+      return baseNet * settings.ryczaltRate;
+    }
     case 'Glovo': {
       const isBeforeUZ = orderDate < new Date(settings.glovoUZStartDate);
       return isBeforeUZ ? baseNet * settings.ryczaltRate : baseNet * settings.uzRate;
@@ -127,7 +130,7 @@ const getTax = (order, settings) => {
 };
 
 const getNetAfterTax = (order, settings) => {
-  const baseNet = getBaseNet(order, settings);
+  const baseNet = getBaseNet(order);
   const tax = getTax(order, settings);
   return baseNet - tax;
 };
@@ -168,7 +171,7 @@ export default function CourierTracker() {
   const { orders, shifts, expenses, settings } = state;
 
   const [tab, setTab] = useState('entry');
-  const [bruttoMode, setBruttoMode] = useState(true); // только для статистики
+  const [showZus, setShowZus] = useState(true);
 
   const [filterType, setFilterType] = useState('all');
   const [customStart, setCustomStart] = useState('');
@@ -186,9 +189,12 @@ export default function CourierTracker() {
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [expenseAmount, setExpenseAmount] = useState('');
   const [expenseNote, setExpenseNote] = useState('');
+  const [expenseCategory, setExpenseCategory] = useState('Обслуживание');
+  const [expenseDate, setExpenseDate] = useState(new Date().toISOString().slice(0,10));
 
   const [editingOrder, setEditingOrder] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showEditExtra, setShowEditExtra] = useState(false);
 
   const fileInputRef = useRef(null);
 
@@ -267,36 +273,46 @@ export default function CourierTracker() {
     return [start, end];
   };
 
-  // Фильтрация заказов
+  // Фильтрация заказов (сортировка по дате)
   const filteredOrders = useMemo(() => {
     const [start, end] = getRange(filterType);
-    return orders.filter(o => {
+    let result = orders.filter(o => {
       const inService = serviceFilter === 'all' || o.service === serviceFilter;
       if (!inService) return false;
       if (start === null && end === null) return true;
       const d = new Date(o.date).toISOString();
       return d >= start && d < end;
     });
+    result = result.sort((a, b) => new Date(b.date) - new Date(a.date));
+    return result;
   }, [orders, filterType, customStart, customEnd, serviceFilter]);
 
-  // Фильтрация смен
   const filteredShifts = useMemo(() => {
     const [start, end] = getRange(filterType);
     if (start === null && end === null) return shifts;
     return shifts.filter(s => s.start >= start && s.start < end);
   }, [shifts, filterType, customStart, customEnd]);
 
-  // Фильтрация расходов
   const filteredExpenses = useMemo(() => {
     const [start, end] = getRange(filterType);
     if (start === null && end === null) return expenses;
     return expenses.filter(e => e.date >= start && e.date < end);
   }, [expenses, filterType, customStart, customEnd]);
 
-  // Статистика
+  // Статистика с учётом ZUS
   const stats = useMemo(() => {
     const grossIncome = filteredOrders.reduce((sum, o) => sum + o.amount + (o.tips || 0), 0);
-    const netAfterTax = filteredOrders.reduce((sum, o) => sum + getNetAfterTax(o, settings), 0);
+    let netAfterTax;
+    if (showZus) {
+      netAfterTax = filteredOrders.reduce((sum, o) => sum + getNetAfterTax(o, settings), 0);
+    } else {
+      netAfterTax = filteredOrders.reduce((sum, o) => {
+        if (o.service === 'Glovo' || o.service === 'Pyszne.pl') {
+          return sum + o.amount;
+        }
+        return sum + getNetAfterTax(o, settings);
+      }, 0);
+    }
 
     const weekCommissions = computeWeeklyCommissions(filteredOrders, settings);
     const totalCommission = weekCommissions.reduce((sum, w) => sum + w.commission, 0);
@@ -336,17 +352,32 @@ export default function CourierTracker() {
       totalKm,
       orderCount: filteredOrders.length,
     };
-  }, [filteredOrders, filteredShifts, filteredExpenses, settings, filterType]);
+  }, [filteredOrders, filteredShifts, filteredExpenses, settings, filterType, showZus]);
 
-  // Отображаемый доход с учётом переключателя только для Uber Eats
-  const displayIncome = useMemo(() => {
-    return filteredOrders.reduce((sum, o) => {
-      const amount = o.service === 'Uber Eats'
-        ? (bruttoMode ? (o.amount + (o.tips || 0)) : getNetAfterTax(o, settings))
-        : (o.amount + (o.tips || 0));
-      return sum + amount;
-    }, 0);
-  }, [filteredOrders, bruttoMode, settings]);
+  // Чистый доход за сегодня и неделю
+  const todayNet = useMemo(() => {
+    const [start, end] = getRange('today');
+    const todayOrders = orders.filter(o => new Date(o.date) >= new Date(start) && new Date(o.date) < new Date(end));
+    const todayShifts = shifts.filter(s => s.start >= start && s.start < end);
+    const todayExpenses = expenses.filter(e => e.date >= start && e.date < end);
+    const netAfter = todayOrders.reduce((sum, o) => sum + (showZus ? getNetAfterTax(o, settings) : o.amount), 0);
+    const commission = computeWeeklyCommissions(todayOrders, settings).reduce((sum, w) => sum + w.commission, 0);
+    const fuel = todayShifts.reduce((sum, s) => sum + (s.fuelCost || 0), 0);
+    const maint = todayExpenses.reduce((sum, e) => sum + e.amount, 0);
+    return netAfter - commission - fuel - maint;
+  }, [orders, shifts, expenses, settings, showZus]);
+
+  const weekNet = useMemo(() => {
+    const [start, end] = getRange('week');
+    const weekOrders = orders.filter(o => new Date(o.date) >= new Date(start) && new Date(o.date) < new Date(end));
+    const weekShifts = shifts.filter(s => s.start >= start && s.start < end);
+    const weekExpenses = expenses.filter(e => e.date >= start && e.date < end);
+    const netAfter = weekOrders.reduce((sum, o) => sum + (showZus ? getNetAfterTax(o, settings) : o.amount), 0);
+    const commission = computeWeeklyCommissions(weekOrders, settings).reduce((sum, w) => sum + w.commission, 0);
+    const fuel = weekShifts.reduce((sum, s) => sum + (s.fuelCost || 0), 0);
+    const maint = weekExpenses.reduce((sum, e) => sum + e.amount, 0);
+    return netAfter - commission - fuel - maint;
+  }, [orders, shifts, expenses, settings, showZus]);
 
   // Рекорды
   const records = useMemo(() => {
@@ -374,24 +405,20 @@ export default function CourierTracker() {
     const map = new Map();
     filteredOrders.forEach(o => {
       const day = formatDate(o.date);
-      const value = o.service === 'Uber Eats'
-        ? (bruttoMode ? (o.amount + (o.tips || 0)) : getNetAfterTax(o, settings))
-        : (o.amount + (o.tips || 0));
+      const value = showZus ? getNetAfterTax(o, settings) : (o.service === 'Glovo' || o.service === 'Pyszne.pl' ? o.amount : getNetAfterTax(o, settings));
       map.set(day, (map.get(day) || 0) + value);
     });
     return Array.from(map.entries()).map(([day, value]) => ({ day, value: Math.round(value * 100) / 100 }));
-  }, [filteredOrders, bruttoMode, settings]);
+  }, [filteredOrders, settings, showZus]);
 
   const serviceData = useMemo(() => {
     const map = new Map();
     filteredOrders.forEach(o => {
-      const value = o.service === 'Uber Eats'
-        ? (bruttoMode ? (o.amount + (o.tips || 0)) : getNetAfterTax(o, settings))
-        : (o.amount + (o.tips || 0));
+      const value = showZus ? getNetAfterTax(o, settings) : (o.service === 'Glovo' || o.service === 'Pyszne.pl' ? o.amount : getNetAfterTax(o, settings));
       map.set(o.service, (map.get(o.service) || 0) + value);
     });
     return Array.from(map.entries()).map(([service, value]) => ({ name: service, value: Math.round(value * 100) / 100 }));
-  }, [filteredOrders, bruttoMode, settings]);
+  }, [filteredOrders, settings, showZus]);
 
   const COLORS = ['#00897B', '#D81B60', '#4CAF50', '#E53935', '#EF6C00', '#5E35B1', '#00838F', '#F57F17'];
 
@@ -424,8 +451,8 @@ export default function CourierTracker() {
       comment: orderForm.comment,
     };
     setState(prev => ({ ...prev, orders: [...prev.orders, newOrder] }));
-    setOrderForm({
-      ...orderForm,
+    setOrderForm(prev => ({
+      ...prev,
       amount: '',
       km1: '',
       km2: '',
@@ -434,8 +461,9 @@ export default function CourierTracker() {
       weather: '',
       problem: '',
       comment: '',
-      date: getLocalDateTimeString(),
-    });
+      // дату не сбрасываем
+      date: orderForm.date,
+    }));
     setShowExtraFields(false);
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 1200);
@@ -446,6 +474,7 @@ export default function CourierTracker() {
       ...order,
       date: new Date(order.date).toISOString().slice(0,16),
     });
+    setShowEditExtra(false);
     setShowEditModal(true);
   };
 
@@ -458,6 +487,10 @@ export default function CourierTracker() {
       km1: parseFloat(editingOrder.km1) || 0,
       km2: parseFloat(editingOrder.km2) || 0,
       tips: parseFloat(editingOrder.tips) || 0,
+      orderType: editingOrder.orderType || '',
+      weather: editingOrder.weather || '',
+      problem: editingOrder.problem || '',
+      comment: editingOrder.comment || '',
     };
     setState(prev => ({
       ...prev,
@@ -494,14 +527,16 @@ export default function CourierTracker() {
     if (!expenseAmount) return;
     const expense = {
       id: genId(),
-      date: new Date().toISOString(),
-      category: 'Обслуживание',
+      date: new Date(expenseDate).toISOString(),
+      category: expenseCategory,
       amount: parseFloat(expenseAmount),
       note: expenseNote,
     };
     setState(prev => ({ ...prev, expenses: [...prev.expenses, expense] }));
     setExpenseAmount('');
     setExpenseNote('');
+    setExpenseCategory('Обслуживание');
+    setExpenseDate(new Date().toISOString().slice(0,10));
     setShowExpenseModal(false);
   };
 
@@ -618,16 +653,6 @@ export default function CourierTracker() {
     }));
   };
 
-  const handleNestedSettingChange = (group, key, value) => {
-    setState(prev => ({
-      ...prev,
-      settings: {
-        ...prev.settings,
-        [group]: { ...prev.settings[group], [key]: value },
-      },
-    }));
-  };
-
   const handleAddCustomService = () => {
     const name = prompt('Название сервиса:');
     if (name && !allServices.find(s => s.name === name)) {
@@ -647,17 +672,21 @@ export default function CourierTracker() {
 
   const getTaxHint = (service) => {
     switch(service) {
-      case 'Uber Eats': return 'Вводите сумму с VAT (23%). Система вычтет налог автоматически.';
-      case 'Bolt Food': return 'Вводите сумму с VAT (8%). Система вычтет налог автоматически.';
-      case 'Stuart': return 'Вводите сумму без VAT (уже чистая).';
+      case 'Uber Eats':
+      case 'Bolt Food':
+        return 'Вводите сумму нетто (после вычета VAT).';
+      case 'Stuart':
+        return 'Вводите сумму без VAT (уже чистая).';
       case 'Glovo': {
         const before = new Date(orderForm.date) < new Date(settings.glovoUZStartDate);
         return before
           ? 'Вводите сумму без VAT. До даты перехода на UZ облагается только Ryczałt.'
           : 'Вводите сумму без VAT. После перехода на UZ облагается ZUS.';
       }
-      case 'Pyszne.pl': return 'Вводите сумму без VAT. Работает по Umowa Zlecenie.';
-      default: return 'Вводите сумму дохода.';
+      case 'Pyszne.pl':
+        return 'Вводите сумму без VAT. Работает по Umowa Zlecenie.';
+      default:
+        return 'Вводите сумму дохода.';
     }
   };
 
@@ -679,30 +708,23 @@ export default function CourierTracker() {
         padding: 'calc(env(safe-area-inset-top) + 16px) 16px 90px',
         boxSizing: 'border-box',
       }}>
-        {/* Шапка */}
+        {/* Шапка с чистыми доходами за сегодня и неделю */}
         <header style={{
           marginBottom: '20px',
           flexShrink: 0,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '12px',
+          flexWrap: 'wrap',
         }}>
-          <div style={{
-            fontSize: '0.7rem',
-            textTransform: 'uppercase',
-            letterSpacing: '0.1em',
-            color: '#71717a',
-            marginBottom: '4px',
-          }}>
-            Доход · {periodLabel(filterType)}
+          <div>
+            <div style={{ fontSize: '0.7rem', color: '#71717a', marginBottom: '2px' }}>Сегодня</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: '700', fontFamily: 'monospace' }}>{formatPLN(todayNet)}</div>
           </div>
-          <div style={{
-            fontSize: '1.8rem',
-            fontWeight: '700',
-            fontFamily: '"SF Mono", "Roboto Mono", monospace',
-            lineHeight: '1.2',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}>
-            {formatPLN(displayIncome)}
+          <div>
+            <div style={{ fontSize: '0.7rem', color: '#71717a', marginBottom: '2px' }}>Неделя</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: '700', fontFamily: 'monospace' }}>{formatPLN(weekNet)}</div>
           </div>
         </header>
 
@@ -1093,7 +1115,7 @@ export default function CourierTracker() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Статистика</h2>
 
-            {/* Переключатель Брутто/Нетто (только для Uber Eats) */}
+            {/* Переключатель ZUS */}
             <div style={{
               display: 'flex',
               gap: '4px',
@@ -1103,36 +1125,36 @@ export default function CourierTracker() {
               border: '1px solid #27272a',
             }}>
               <button
-                onClick={() => setBruttoMode(true)}
+                onClick={() => setShowZus(true)}
                 style={{
                   flex: 1,
                   padding: '10px',
                   borderRadius: '8px',
                   border: 'none',
-                  background: bruttoMode ? '#22d3ee' : 'transparent',
-                  color: bruttoMode ? '#000000' : '#71717a',
+                  background: showZus ? '#22d3ee' : 'transparent',
+                  color: showZus ? '#000000' : '#71717a',
                   fontWeight: '700',
                   fontSize: '0.85rem',
                   cursor: 'pointer',
                 }}
               >
-                Брутто
+                С ZUS
               </button>
               <button
-                onClick={() => setBruttoMode(false)}
+                onClick={() => setShowZus(false)}
                 style={{
                   flex: 1,
                   padding: '10px',
                   borderRadius: '8px',
                   border: 'none',
-                  background: !bruttoMode ? '#22d3ee' : 'transparent',
-                  color: !bruttoMode ? '#000000' : '#71717a',
+                  background: !showZus ? '#22d3ee' : 'transparent',
+                  color: !showZus ? '#000000' : '#71717a',
                   fontWeight: '700',
                   fontSize: '0.85rem',
                   cursor: 'pointer',
                 }}
               >
-                Нетто
+                Без ZUS
               </button>
             </div>
 
@@ -1168,9 +1190,28 @@ export default function CourierTracker() {
               ))}
             </div>
 
+            {/* Кнопка добавления расхода */}
+            {(filterType === 'week' || filterType === 'month') && (
+              <button onClick={() => setShowExpenseModal(true)} style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                padding: '10px',
+                borderRadius: '10px',
+                background: '#111111',
+                border: '1px solid #27272a',
+                color: '#22d3ee',
+                cursor: 'pointer',
+                fontSize: '0.85rem',
+              }}>
+                <Plus size={16} /> Добавить расход
+              </button>
+            )}
+
             {/* Сводные карточки */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
-              <StatCard label="Доход" value={formatPLN(displayIncome)} />
+              <StatCard label="Доход" value={formatPLN(stats.grossIncome)} />
               <StatCard label="Чистыми" value={formatPLN(stats.totalNetProfit)} />
               <StatCard label="Доход/час" value={stats.incomePerHour ? formatPLN(stats.incomePerHour) : '—'} />
               <StatCard label="Средний чек" value={formatPLN(stats.avgCheck)} />
@@ -1361,13 +1402,13 @@ export default function CourierTracker() {
             {/* Налоги */}
             <div style={{ background: '#111111', borderRadius: '16px', padding: '16px', border: '1px solid #27272a' }}>
               <h3 style={{ fontSize: '1rem', marginBottom: '12px', marginTop: 0 }}>Налоги</h3>
-              <SettingRow label="VAT Uber Eats, %" value={settings.vatRates.uber * 100} onChange={(v) => handleNestedSettingChange('vatRates', 'uber', v / 100)} />
-              <SettingRow label="VAT Bolt Food, %" value={settings.vatRates.bolt * 100} onChange={(v) => handleNestedSettingChange('vatRates', 'bolt', v / 100)} />
               <SettingRow label="Ryczałt, %" value={settings.ryczaltRate * 100} onChange={(v) => handleSettingsChange('ryczaltRate', v / 100)} />
               <SettingRow label="UZ (ZUS), %" value={settings.uzRate * 100} onChange={(v) => handleSettingsChange('uzRate', v / 100)} />
               <SettingRow label="Фикс. ZUS, PLN" value={settings.zusFixed} onChange={(v) => handleSettingsChange('zusFixed', parseFloat(v) || 0)} />
               <SettingRow label="Дата перехода Uber" value={settings.transitionDate} onChange={(v) => handleSettingsChange('transitionDate', v)} />
               <SettingRow label="Дата перехода Glovo на UZ" value={settings.glovoUZStartDate} onChange={(v) => handleSettingsChange('glovoUZStartDate', v)} />
+              <SettingRow label="Дата перехода Bolt на UZ (пусто = нет)" value={settings.boltUZStartDate || ''} onChange={(v) => handleSettingsChange('boltUZStartDate', v || null)} />
+              <SettingRow label="Дата перехода Stuart на UZ (пусто = нет)" value={settings.stuartUZStartDate || ''} onChange={(v) => handleSettingsChange('stuartUZStartDate', v || null)} />
             </div>
 
             {/* Комиссия партнёра */}
@@ -1483,9 +1524,52 @@ export default function CourierTracker() {
       {showExpenseModal && (
         <Modal onClose={() => setShowExpenseModal(false)}>
           <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', marginTop: 0 }}>Добавить расход</h3>
-          <input type="number" step="0.01" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} placeholder="Сумма, PLN" style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', marginBottom: '8px', boxSizing: 'border-box', fontSize: '16px' }} />
-          <input type="text" value={expenseNote} onChange={(e) => setExpenseNote(e.target.value)} placeholder="Описание (масло, ремонт...)" style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', marginBottom: '12px', boxSizing: 'border-box', fontSize: '16px' }} />
-          <button onClick={handleAddExpense} style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#10b981', color: '#022c22', border: 'none', fontWeight: '700', cursor: 'pointer' }}>Сохранить</button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Категория</label>
+              <select
+                value={expenseCategory}
+                onChange={(e) => setExpenseCategory(e.target.value)}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+              >
+                <option value="Топливо">Топливо</option>
+                <option value="Обслуживание">Обслуживание</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Дата</label>
+              <input
+                type="date"
+                value={expenseDate}
+                onChange={(e) => setExpenseDate(e.target.value)}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Сумма (PLN)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={expenseAmount}
+                onChange={(e) => setExpenseAmount(e.target.value)}
+                placeholder="0.00"
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Описание</label>
+              <input
+                type="text"
+                value={expenseNote}
+                onChange={(e) => setExpenseNote(e.target.value)}
+                placeholder="Например: масло, ремонт..."
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+              />
+            </div>
+            <button onClick={handleAddExpense} style={{ padding: '12px', borderRadius: '8px', background: '#10b981', color: '#022c22', border: 'none', fontWeight: '700', cursor: 'pointer' }}>
+              Сохранить расход
+            </button>
+          </div>
         </Modal>
       )}
 
@@ -1544,6 +1628,73 @@ export default function CourierTracker() {
                 style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
               />
             </div>
+
+            {/* Кнопка "Ещё" для дополнительных полей */}
+            <button type="button" onClick={() => setShowEditExtra(!showEditExtra)} style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              color: '#a1a1aa',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '0.85rem',
+              padding: 0,
+            }}>
+              {showEditExtra ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              {showEditExtra ? 'Скрыть детали' : 'Ещё детали'}
+            </button>
+
+            {showEditExtra && (
+              <>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Тип заказа</label>
+                  <input
+                    type="text"
+                    value={editingOrder.orderType || ''}
+                    onChange={(e) => setEditingOrder({...editingOrder, orderType: e.target.value})}
+                    placeholder="Ресторан, Магазин..."
+                    style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Погода</label>
+                  <select
+                    value={editingOrder.weather || ''}
+                    onChange={(e) => setEditingOrder({...editingOrder, weather: e.target.value})}
+                    style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+                  >
+                    <option value="">-</option>
+                    <option value="Ясно">Ясно</option>
+                    <option value="Дождь">Дождь</option>
+                    <option value="Снег">Снег</option>
+                    <option value="Жара">Жара</option>
+                    <option value="Холодно">Холодно</option>
+                    <option value="Вечер">Вечер</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Проблемы с заказом</label>
+                  <input
+                    type="text"
+                    value={editingOrder.problem || ''}
+                    onChange={(e) => setEditingOrder({...editingOrder, problem: e.target.value})}
+                    placeholder="Опишите проблему"
+                    style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Комментарий</label>
+                  <textarea
+                    value={editingOrder.comment || ''}
+                    onChange={(e) => setEditingOrder({...editingOrder, comment: e.target.value})}
+                    rows="2"
+                    style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', resize: 'vertical', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </>
+            )}
+
             <button onClick={handleEditSave} style={{ padding: '12px', borderRadius: '8px', background: '#10b981', color: '#022c22', border: 'none', fontWeight: '700', cursor: 'pointer' }}>
               Сохранить изменения
             </button>
@@ -1654,12 +1805,11 @@ function SettingRow({ label, value, onChange }) {
     }}>
       <span style={{ fontSize: '0.85rem', color: '#d4d4d8', flex: 1 }}>{label}</span>
       <input
-        type="number"
-        step="any"
+        type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         style={{
-          width: '90px',
+          width: '120px',
           padding: '8px',
           borderRadius: '6px',
           background: '#000000',
@@ -1684,4 +1834,3 @@ function periodLabel(period) {
     default: return '';
   }
 }
-
