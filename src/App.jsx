@@ -762,26 +762,7 @@ export default function CourierTracker() {
         return 'Вводите сумму дохода.';
     }
   };
-const weekGroups = useMemo(() => {
-    const groups = new Map();
-    shifts.forEach(s => {
-      const d = new Date(stripZ(s.start));
-      const day = d.getDay() === 0 ? 7 : d.getDay();
-      const monday = new Date(d);
-      monday.setDate(d.getDate() - day + 1);
-      monday.setHours(0,0,0,0);
-      const key = monday.toISOString();
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(s);
-    });
-    return Array.from(groups.entries())
-      .sort((a,b) => new Date(b[0]) - new Date(a[0]))
-      .map(([weekStart, weekShifts]) => {
-        const weekEnd = new Date(new Date(weekStart).getTime() + 7*24*3600*1000);
-        const totalHours = weekShifts.reduce((sum, s) => sum + (new Date(stripZ(s.end)) - new Date(stripZ(s.start))) / 3600000, 0);
-        return { weekStart, weekShifts, weekEnd, totalHours };
-      });
-  }, [shifts]);
+
   const miniButtonStyle = {
     padding: '8px 12px',
     borderRadius: '8px',
@@ -834,7 +815,7 @@ const weekGroups = useMemo(() => {
         {/* Контент вкладок */}
         {tab === 'entry' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {/* Смена */}
+            {/* Карточка смены */}
             <div style={{
               background: '#111111',
               borderRadius: '16px',
@@ -911,7 +892,7 @@ const weekGroups = useMemo(() => {
               padding: '16px',
               border: '1px solid #27272a',
             }}>
-              {/* Сервис */}
+              {/* Выбор сервиса */}
               <div>
                 <label style={{
                   fontSize: '0.75rem',
@@ -967,7 +948,7 @@ const weekGroups = useMemo(() => {
                 </div>
               </div>
 
-              {/* Сумма и км */}
+              {/* Сумма и километраж */}
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: '1fr 1fr',
@@ -1026,7 +1007,7 @@ const weekGroups = useMemo(() => {
                 </div>
               </div>
 
-              {/* Кнопки скриншот и сохранить */}
+              {/* Кнопки Скриншот и Сохранить */}
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: '1fr 1fr',
@@ -1063,7 +1044,7 @@ const weekGroups = useMemo(() => {
                 </button>
               </div>
 
-              {/* Доп. поля */}
+              {/* Дополнительные поля */}
               <button type="button" onClick={() => setShowExtraFields(!showExtraFields)} style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -1219,7 +1200,7 @@ const weekGroups = useMemo(() => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Статистика</h2>
 
-            {/* ZUS переключатель */}
+            {/* Переключатель ZUS */}
             <div style={{
               display: 'flex',
               gap: '4px',
@@ -1330,7 +1311,7 @@ const weekGroups = useMemo(() => {
               </button>
             </div>
 
-            {/* Карточки */}
+            {/* Сводные карточки */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
               <StatCard label="Доход" value={formatPLN(stats.grossIncome)} />
               <StatCard label="Чистыми" value={formatPLN(stats.totalNetProfit)} />
@@ -1553,7 +1534,7 @@ const weekGroups = useMemo(() => {
           </div>
         )}
 
-                {tab === 'calendar' && (
+        {tab === 'calendar' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Календарь смен</h2>
             <button onClick={() => setShowShiftModal(true)} style={{
@@ -1575,73 +1556,46 @@ const weekGroups = useMemo(() => {
             {shifts.length === 0 ? (
               <p style={{ textAlign: 'center', color: '#52525b', padding: '40px 0' }}>Нет смен</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {weekGroups.map(group => (
-                  <div key={group.weekStart} style={{
-                    background: '#111111',
-                    borderRadius: '16px',
-                    padding: '16px',
-                    border: '1px solid #27272a',
-                  }}>
-                    <div style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      marginBottom: '12px',
-                    }}>
-                      <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#fafafa' }}>
-                        {formatDate(group.weekStart)} – {formatDate(new Date(group.weekEnd - 1))}
-                      </span>
-                      <span style={{
-                        fontSize: '0.85rem',
-                        color: '#22d3ee',
-                        fontWeight: '700',
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {shifts
+                  .slice()
+                  .sort((a, b) => new Date(stripZ(b.start)) - new Date(stripZ(a.start)))
+                  .map(s => {
+                    const start = new Date(stripZ(s.start));
+                    const end = new Date(stripZ(s.end));
+                    const duration = (end - start) / 3600000;
+                    const isPast = end < new Date();
+                    return (
+                      <div key={s.id} style={{
+                        background: isPast ? '#111111' : '#1a1a2e',
+                        borderRadius: '12px',
+                        padding: '12px',
+                        border: `1px solid ${isPast ? '#27272a' : '#22d3ee'}`,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '8px',
                       }}>
-                        {group.totalHours.toFixed(1)} ч
-                      </span>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {group.weekShifts
-                        .slice()
-                        .sort((a,b) => new Date(stripZ(a.start)) - new Date(stripZ(b.start)))
-                        .map(s => {
-                          const start = new Date(stripZ(s.start));
-                          const end = new Date(stripZ(s.end));
-                          const duration = (end - start) / 3600000;
-                          const isPast = end < new Date();
-                          return (
-                            <div key={s.id} style={{
-                              background: isPast ? '#1a1a1a' : '#1a1a2e',
-                              borderRadius: '10px',
-                              padding: '10px',
-                              border: `1px solid ${isPast ? '#3f3f46' : '#22d3ee'}`,
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              gap: '8px',
-                            }}>
-                              <div>
-                                <div style={{ fontWeight: '600', fontSize: '0.85rem', color: isPast ? '#d4d4d8' : '#22d3ee' }}>
-                                  {formatDate(s.start)}
-                                </div>
-                                <div style={{ fontSize: '0.75rem', color: '#71717a' }}>
-                                  {formatTime(s.start)} – {formatTime(s.end)} · {duration.toFixed(1)} ч
-                                </div>
-                                {s.fuelCost > 0 && <div style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Топливо: {formatPLN(s.fuelCost)}</div>}
-                              </div>
-                              <button onClick={() => handleDeleteShift(s.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  </div>
-                ))}
+                        <div>
+                          <div style={{ fontWeight: '600', fontSize: '0.9rem', color: isPast ? '#d4d4d8' : '#22d3ee' }}>
+                            {formatDate(s.start)}
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: '#71717a' }}>
+                            {formatTime(s.start)} – {formatTime(s.end)} · {duration.toFixed(1)} ч
+                          </div>
+                          {s.fuelCost > 0 && <div style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Топливо: {formatPLN(s.fuelCost)}</div>}
+                        </div>
+                        <button onClick={() => handleDeleteShift(s.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
               </div>
             )}
           </div>
         )}
+
         {tab === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Настройки</h2>
@@ -1738,7 +1692,7 @@ const weekGroups = useMemo(() => {
         <NavButton icon={<SettingsIcon size={22} />} label="Настройки" active={tab === 'settings'} onClick={() => setTab('settings')} />
       </nav>
 
-      {/* Модалки */}
+      {/* Модальные окна */}
       {showScreenshotModal && (
         <Modal onClose={() => {
           setShowScreenshotModal(false);
