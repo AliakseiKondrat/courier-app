@@ -335,19 +335,24 @@ export default function CourierTracker() {
     const totalMaintenance = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
 
     let zusDeduction = 0;
-    if (filterType === 'month' && showZus) {
-      const servicesOnRyczalt = new Set();
-      filteredOrders.forEach(o => {
+    if (showZus) {
+      // Проверяем, есть ли хотя бы один заказ на Uber/Bolt/Stuart, подпадающий под Ryczałt
+      const hasRyczaltService = filteredOrders.some(o => {
         const date = new Date(stripZ(o.date));
         if (o.service === 'Uber Eats') {
-          if (date < new Date(settings.transitionDate)) servicesOnRyczalt.add('uber');
-        } else if (o.service === 'Bolt Food') {
-          if (!settings.boltUZStartDate || date < new Date(settings.boltUZStartDate)) servicesOnRyczalt.add('bolt');
-        } else if (o.service === 'Stuart') {
-          if (!settings.stuartUZStartDate || date < new Date(settings.stuartUZStartDate)) servicesOnRyczalt.add('stuart');
+          return date < new Date(settings.transitionDate);
         }
+        if (o.service === 'Bolt Food') {
+          return !settings.boltUZStartDate || date < new Date(settings.boltUZStartDate);
+        }
+        if (o.service === 'Stuart') {
+          return !settings.stuartUZStartDate || date < new Date(settings.stuartUZStartDate);
+        }
+        return false;
       });
-      if (servicesOnRyczalt.size > 0) zusDeduction = settings.zusFixed;
+      if (hasRyczaltService) {
+        zusDeduction = settings.zusFixed;
+      }
     }
 
     const totalNetProfit = netAfterTax - totalCommission - totalFuel - totalMaintenance - zusDeduction;
