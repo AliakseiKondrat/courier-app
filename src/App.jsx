@@ -243,12 +243,10 @@ export default function CourierTracker() {
     return allServices.find(s => s.name === name) || { name, color: '#71717A', icon: '📦' };
   };
 
-  // Сброс выбора при изменении фильтров
   useEffect(() => {
     setSelectedOrderIds(new Set());
   }, [filterType, serviceFilter]);
 
-  // Функция получения диапазона дат
   const getRange = (type) => {
     const now = new Date();
     let start, end;
@@ -285,7 +283,6 @@ export default function CourierTracker() {
     return [start, end];
   };
 
-  // Фильтрация заказов (сортировка по дате)
   const filteredOrders = useMemo(() => {
     const [start, end] = getRange(filterType);
     let result = orders.filter(o => {
@@ -299,21 +296,18 @@ export default function CourierTracker() {
     return result;
   }, [orders, filterType, customStart, customEnd, serviceFilter]);
 
-  // Фильтрация смен
   const filteredShifts = useMemo(() => {
     const [start, end] = getRange(filterType);
     if (start === null && end === null) return shifts;
     return shifts.filter(s => s.start >= start && s.start < end);
   }, [shifts, filterType, customStart, customEnd]);
 
-  // Фильтрация расходов
   const filteredExpenses = useMemo(() => {
     const [start, end] = getRange(filterType);
     if (start === null && end === null) return expenses;
     return expenses.filter(e => e.date >= start && e.date < end);
   }, [expenses, filterType, customStart, customEnd]);
 
-  // Статистика с учётом ZUS
   const stats = useMemo(() => {
     const grossIncome = filteredOrders.reduce((sum, o) => sum + o.amount + (o.tips || 0), 0);
     let netAfterTax;
@@ -334,7 +328,6 @@ export default function CourierTracker() {
     const totalFuel = filteredShifts.reduce((sum, s) => sum + (s.fuelCost || 0), 0);
     const totalMaintenance = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
 
-    // ZUS: вычитаем по 110 zł за каждый месяц, в котором были заказы на Stuart/Uber/Bolt Food
     let zusDeduction = 0;
     if (showZus) {
       const monthSet = new Set();
@@ -376,7 +369,6 @@ export default function CourierTracker() {
     };
   }, [filteredOrders, filteredShifts, filteredExpenses, settings, filterType, showZus]);
 
-  // Чистый доход за сегодня и неделю
   const todayNet = useMemo(() => {
     const [start, end] = getRange('today');
     const todayOrders = orders.filter(o => new Date(stripZ(o.date)) >= new Date(start) && new Date(stripZ(o.date)) < new Date(end));
@@ -401,7 +393,6 @@ export default function CourierTracker() {
     return netAfter - commission - fuel - maint;
   }, [orders, shifts, expenses, settings, showZus]);
 
-  // Рекорды
   const records = useMemo(() => {
     if (filteredOrders.length === 0) return null;
     const byDay = {};
@@ -422,7 +413,6 @@ export default function CourierTracker() {
     return { bestDay, bestService, maxOrder };
   }, [filteredOrders]);
 
-  // Данные для графиков
   const dailyData = useMemo(() => {
     const map = new Map();
     filteredOrders.forEach(o => {
@@ -646,9 +636,22 @@ export default function CourierTracker() {
       try {
         const content = ev.target.result;
         if (file.name.endsWith('.json')) {
-          const imported = JSON.parse(content);
-          if (Array.isArray(imported)) {
-            setState(prev => ({ ...prev, orders: [...prev.orders, ...imported.map(o => ({ ...o, id: genId() }))] }));
+          const parsed = JSON.parse(content);
+          if (parsed.shifts && Array.isArray(parsed.shifts)) {
+            setState(prev => ({
+              ...prev,
+              shifts: [...prev.shifts, ...parsed.shifts.map(s => ({ ...s, id: genId() }))]
+            }));
+            alert(`Импортировано смен: ${parsed.shifts.length}`);
+          } else if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].start && parsed[0].end && !parsed[0].amount) {
+            setState(prev => ({
+              ...prev,
+              shifts: [...prev.shifts, ...parsed.map(s => ({ ...s, id: genId() }))]
+            }));
+            alert(`Импортировано смен: ${parsed.length}`);
+          } else if (Array.isArray(parsed)) {
+            setState(prev => ({ ...prev, orders: [...prev.orders, ...parsed.map(o => ({ ...o, id: genId() }))] }));
+            alert(`Импортировано заказов: ${parsed.length}`);
           }
         } else {
           const text = content.replace(/^\uFEFF/, '');
@@ -673,6 +676,7 @@ export default function CourierTracker() {
             };
           });
           setState(prev => ({ ...prev, orders: [...prev.orders, ...orderRows] }));
+          alert(`Импортировано заказов: ${orderRows.length}`);
         }
       } catch (err) {
         alert('Ошибка импорта: ' + err.message);
@@ -788,7 +792,7 @@ export default function CourierTracker() {
         padding: 'calc(env(safe-area-inset-top) + 16px) 16px 90px',
         boxSizing: 'border-box',
       }}>
-        {/* Шапка с чистыми доходами за сегодня и неделю */}
+        {/* Шапка */}
         <header style={{
           marginBottom: '20px',
           flexShrink: 0,
@@ -811,7 +815,7 @@ export default function CourierTracker() {
         {/* Контент вкладок */}
         {tab === 'entry' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {/* Карточка смены */}
+            {/* Смена */}
             <div style={{
               background: '#111111',
               borderRadius: '16px',
@@ -888,7 +892,7 @@ export default function CourierTracker() {
               padding: '16px',
               border: '1px solid #27272a',
             }}>
-              {/* Выбор сервиса */}
+              {/* Сервис */}
               <div>
                 <label style={{
                   fontSize: '0.75rem',
@@ -944,7 +948,7 @@ export default function CourierTracker() {
                 </div>
               </div>
 
-              {/* Сумма и километраж */}
+              {/* Сумма и км */}
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: '1fr 1fr',
@@ -1003,7 +1007,7 @@ export default function CourierTracker() {
                 </div>
               </div>
 
-              {/* Кнопки Скриншот и Сохранить */}
+              {/* Кнопки скриншот и сохранить */}
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: '1fr 1fr',
@@ -1040,7 +1044,7 @@ export default function CourierTracker() {
                 </button>
               </div>
 
-              {/* Дополнительные поля */}
+              {/* Доп. поля */}
               <button type="button" onClick={() => setShowExtraFields(!showExtraFields)} style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -1196,7 +1200,7 @@ export default function CourierTracker() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Статистика</h2>
 
-            {/* Переключатель ZUS */}
+            {/* ZUS переключатель */}
             <div style={{
               display: 'flex',
               gap: '4px',
@@ -1271,7 +1275,7 @@ export default function CourierTracker() {
               ))}
             </div>
 
-            {/* Кнопка добавления расхода и смены */}
+            {/* Кнопки добавить расход/смену */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {(filterType === 'week' || filterType === 'month') && (
                 <button onClick={() => setShowExpenseModal(true)} style={{
@@ -1307,7 +1311,7 @@ export default function CourierTracker() {
               </button>
             </div>
 
-            {/* Сводные карточки */}
+            {/* Карточки */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
               <StatCard label="Доход" value={formatPLN(stats.grossIncome)} />
               <StatCard label="Чистыми" value={formatPLN(stats.totalNetProfit)} />
@@ -1386,7 +1390,7 @@ export default function CourierTracker() {
               </div>
             )}
 
-            {/* Детализация расходов */}
+            {/* Детализация */}
             <div style={{ background: '#111111', borderRadius: '16px', padding: '16px', border: '1px solid #27272a' }}>
               <h3 style={{ fontSize: '1rem', marginBottom: '8px', marginTop: 0 }}>Детализация</h3>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: '#d4d4d8', marginBottom: '4px' }}>
@@ -1530,120 +1534,116 @@ export default function CourierTracker() {
           </div>
         )}
 
-       {tab === 'calendar' && (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-    <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Календарь смен</h2>
-    <button onClick={() => setShowShiftModal(true)} style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: '8px',
-      padding: '10px',
-      borderRadius: '10px',
-      background: '#111111',
-      border: '1px solid #27272a',
-      color: '#22d3ee',
-      cursor: 'pointer',
-      fontSize: '0.85rem',
-    }}>
-      <Plus size={16} /> Добавить смену
-    </button>
-
-    {shifts.length === 0 ? (
-      <p style={{ textAlign: 'center', color: '#52525b', padding: '40px 0' }}>Нет смен</p>
-    ) : (
-      (() => {
-        // Группировка смен по неделям (понедельник-воскресенье)
-        const groups = new Map();
-        shifts.forEach(s => {
-          const d = new Date(stripZ(s.start));
-          const day = d.getDay() === 0 ? 7 : d.getDay(); // 1=Пн..7=Вс
-          const monday = new Date(d);
-          monday.setDate(d.getDate() - day + 1);
-          monday.setHours(0,0,0,0);
-          const key = monday.toISOString();
-          if (!groups.has(key)) {
-            groups.set(key, []);
-          }
-          groups.get(key).push(s);
-        });
-
-        // Сортировка недель по убыванию
-        const sortedWeeks = Array.from(groups.entries())
-          .sort((a,b) => new Date(b[0]) - new Date(a[0]));
-
-        return sortedWeeks.map(([weekStart, weekShifts]) => {
-          const weekEnd = new Date(new Date(weekStart).getTime() + 7*24*3600*1000);
-          const totalHours = weekShifts.reduce((sum, s) => {
-            return sum + (new Date(stripZ(s.end)) - new Date(stripZ(s.start))) / 3600000;
-          }, 0);
-          return (
-            <div key={weekStart} style={{
+        {tab === 'calendar' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Календарь смен</h2>
+            <button onClick={() => setShowShiftModal(true)} style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              padding: '10px',
+              borderRadius: '10px',
               background: '#111111',
-              borderRadius: '16px',
-              padding: '16px',
               border: '1px solid #27272a',
+              color: '#22d3ee',
+              cursor: 'pointer',
+              fontSize: '0.85rem',
             }}>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '12px',
-              }}>
-                <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#fafafa' }}>
-                  {formatDate(weekStart)} – {formatDate(new Date(weekEnd - 1))}
-                </span>
-                <span style={{
-                  fontSize: '0.85rem',
-                  color: '#22d3ee',
-                  fontWeight: '700',
-                }}>
-                  {totalHours.toFixed(1)} ч
-                </span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {weekShifts
-                  .slice()
-                  .sort((a,b) => new Date(stripZ(a.start)) - new Date(stripZ(b.start)))
-                  .map(s => {
-                    const start = new Date(stripZ(s.start));
-                    const end = new Date(stripZ(s.end));
-                    const duration = (end - start) / 3600000;
-                    const isPast = end < new Date();
-                    return (
-                      <div key={s.id} style={{
-                        background: isPast ? '#1a1a1a' : '#1a1a2e',
-                        borderRadius: '10px',
-                        padding: '10px',
-                        border: `1px solid ${isPast ? '#3f3f46' : '#22d3ee'}`,
+              <Plus size={16} /> Добавить смену
+            </button>
+
+            {shifts.length === 0 ? (
+              <p style={{ textAlign: 'center', color: '#52525b', padding: '40px 0' }}>Нет смен</p>
+            ) : (
+              (() => {
+                const groups = new Map();
+                shifts.forEach(s => {
+                  const d = new Date(stripZ(s.start));
+                  const day = d.getDay() === 0 ? 7 : d.getDay();
+                  const monday = new Date(d);
+                  monday.setDate(d.getDate() - day + 1);
+                  monday.setHours(0,0,0,0);
+                  const key = monday.toISOString();
+                  if (!groups.has(key)) groups.set(key, []);
+                  groups.get(key).push(s);
+                });
+
+                const sortedWeeks = Array.from(groups.entries())
+                  .sort((a,b) => new Date(b[0]) - new Date(a[0]));
+
+                return sortedWeeks.map(([weekStart, weekShifts]) => {
+                  const weekEnd = new Date(new Date(weekStart).getTime() + 7*24*3600*1000);
+                  const totalHours = weekShifts.reduce((sum, s) => {
+                    return sum + (new Date(stripZ(s.end)) - new Date(stripZ(s.start))) / 3600000;
+                  }, 0);
+                  return (
+                    <div key={weekStart} style={{
+                      background: '#111111',
+                      borderRadius: '16px',
+                      padding: '16px',
+                      border: '1px solid #27272a',
+                    }}>
+                      <div style={{
                         display: 'flex',
                         justifyContent: 'space-between',
                         alignItems: 'center',
-                        gap: '8px',
+                        marginBottom: '12px',
                       }}>
-                        <div>
-                          <div style={{ fontWeight: '600', fontSize: '0.85rem', color: isPast ? '#d4d4d8' : '#22d3ee' }}>
-                            {formatDate(s.start)}
-                          </div>
-                          <div style={{ fontSize: '0.75rem', color: '#71717a' }}>
-                            {formatTime(s.start)} – {formatTime(s.end)} · {duration.toFixed(1)} ч
-                          </div>
-                          {s.fuelCost > 0 && <div style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Топливо: {formatPLN(s.fuelCost)}</div>}
-                        </div>
-                        <button onClick={() => handleDeleteShift(s.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
-                          <Trash2 size={14} />
-                        </button>
+                        <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#fafafa' }}>
+                          {formatDate(weekStart)} – {formatDate(new Date(weekEnd - 1))}
+                        </span>
+                        <span style={{
+                          fontSize: '0.85rem',
+                          color: '#22d3ee',
+                          fontWeight: '700',
+                        }}>
+                          {totalHours.toFixed(1)} ч
+                        </span>
                       </div>
-                    );
-                  })}
-              </div>
-            </div>
-          );
-        });
-      })()
-    )}
-  </div>
-)}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {weekShifts
+                          .slice()
+                          .sort((a,b) => new Date(stripZ(a.start)) - new Date(stripZ(b.start)))
+                          .map(s => {
+                            const start = new Date(stripZ(s.start));
+                            const end = new Date(stripZ(s.end));
+                            const duration = (end - start) / 3600000;
+                            const isPast = end < new Date();
+                            return (
+                              <div key={s.id} style={{
+                                background: isPast ? '#1a1a1a' : '#1a1a2e',
+                                borderRadius: '10px',
+                                padding: '10px',
+                                border: `1px solid ${isPast ? '#3f3f46' : '#22d3ee'}`,
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                gap: '8px',
+                              }}>
+                                <div>
+                                  <div style={{ fontWeight: '600', fontSize: '0.85rem', color: isPast ? '#d4d4d8' : '#22d3ee' }}>
+                                    {formatDate(s.start)}
+                                  </div>
+                                  <div style={{ fontSize: '0.75rem', color: '#71717a' }}>
+                                    {formatTime(s.start)} – {formatTime(s.end)} · {duration.toFixed(1)} ч
+                                  </div>
+                                  {s.fuelCost > 0 && <div style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Топливо: {formatPLN(s.fuelCost)}</div>}
+                                </div>
+                                <button onClick={() => handleDeleteShift(s.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  );
+                });
+              })()
+            )}
+          </div>
+        )}
 
         {tab === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -1684,7 +1684,7 @@ export default function CourierTracker() {
               </button>
             </div>
 
-            {/* Расходы на обслуживание */}
+            {/* Обслуживание */}
             <div style={{ background: '#111111', borderRadius: '16px', padding: '16px', border: '1px solid #27272a' }}>
               <h3 style={{ fontSize: '1rem', marginBottom: '12px', marginTop: 0 }}>Обслуживание</h3>
               <button onClick={() => setShowExpenseModal(true)} style={{ padding: '10px 14px', borderRadius: '8px', background: '#1a1a1a', border: '1px solid #3f3f46', color: '#d4d4d8', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
@@ -1741,7 +1741,7 @@ export default function CourierTracker() {
         <NavButton icon={<SettingsIcon size={22} />} label="Настройки" active={tab === 'settings'} onClick={() => setTab('settings')} />
       </nav>
 
-      {/* Модальные окна */}
+      {/* Модалки */}
       {showScreenshotModal && (
         <Modal onClose={() => {
           setShowScreenshotModal(false);
@@ -1935,7 +1935,7 @@ export default function CourierTracker() {
               />
             </div>
 
-            {/* Кнопка "Ещё" для дополнительных полей */}
+            {/* Ещё детали */}
             <button type="button" onClick={() => setShowEditExtra(!showEditExtra)} style={{
               display: 'flex',
               alignItems: 'center',
