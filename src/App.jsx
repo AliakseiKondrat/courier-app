@@ -162,7 +162,7 @@ export default function CourierTracker() {
   const [tab, setTab] = useState('entry');
   const [bruttoMode, setBruttoMode] = useState(true);
 
-  const [filterType, setFilterType] = useState('week');
+  const [filterType, setFilterType] = useState('all');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [serviceFilter, setServiceFilter] = useState('all');
@@ -180,6 +180,11 @@ export default function CourierTracker() {
   const [expenseNote, setExpenseNote] = useState('');
 
   const fileInputRef = useRef(null);
+    const getLocalDateTimeString = () => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
 
   const [orderForm, setOrderForm] = useState({
     service: 'Uber Eats',
@@ -191,7 +196,7 @@ export default function CourierTracker() {
     weather: '',
     problem: '',
     comment: '',
-    date: new Date().toISOString().slice(0,16),
+    date: getLocalDateTimeString(),
   });
   const [showExtraFields, setShowExtraFields] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -242,10 +247,10 @@ export default function CourierTracker() {
         start = customStart ? new Date(customStart).toISOString() : new Date(0).toISOString();
         end = customEnd ? new Date(customEnd).toISOString() : new Date(8640000000000000).toISOString();
         break;
-      case 'all':
+       case 'all':
       default:
-        start = new Date(0).toISOString();
-        end = new Date(8640000000000000).toISOString();
+        start = null;
+        end = null;
     }
     return [start, end];
   };
@@ -254,25 +259,27 @@ export default function CourierTracker() {
   const filteredOrders = useMemo(() => {
     const [start, end] = getRange(filterType);
     return orders.filter(o => {
-      const d = new Date(o.date).toISOString();
-      const inDate = d >= start && d < end;
       const inService = serviceFilter === 'all' || o.service === serviceFilter;
-      return inDate && inService;
+      if (!inService) return false;
+      if (start === null && end === null) return true;
+      const d = new Date(o.date).toISOString();
+      return d >= start && d < end;
     });
   }, [orders, filterType, customStart, customEnd, serviceFilter]);
 
   // Фильтрация смен
-  const filteredShifts = useMemo(() => {
+ const filteredShifts = useMemo(() => {
     const [start, end] = getRange(filterType);
+    if (start === null && end === null) return shifts;
     return shifts.filter(s => s.start >= start && s.start < end);
   }, [shifts, filterType, customStart, customEnd]);
 
   // Фильтрация расходов
-  const filteredExpenses = useMemo(() => {
+      const filteredExpenses = useMemo(() => {
     const [start, end] = getRange(filterType);
+    if (start === null && end === null) return expenses;
     return expenses.filter(e => e.date >= start && e.date < end);
   }, [expenses, filterType, customStart, customEnd]);
-
   // Статистика
   const stats = useMemo(() => {
     const grossIncome = filteredOrders.reduce((sum, o) => sum + o.amount + (o.tips || 0), 0);
@@ -389,7 +396,7 @@ export default function CourierTracker() {
       weather: '',
       problem: '',
       comment: '',
-      date: new Date().toISOString().slice(0,16),
+      date: getLocalDateTimeString(),
     });
     setShowExtraFields(false);
     setSavedFlash(true);
@@ -601,12 +608,12 @@ export default function CourierTracker() {
       display: 'flex',
       flexDirection: 'column',
     }}>
-      <div style={{
+       <div style={{
         maxWidth: '100%',
         width: '100%',
-        padding: '16px',
-        paddingBottom: '90px',
+        padding: 'calc(env(safe-area-inset-top) + 16px) 16px 90px',
         boxSizing: 'border-box',
+     
       }}>
         {/* Шапка */}
         <header style={{
@@ -964,7 +971,7 @@ export default function CourierTracker() {
                       <option value="">-</option>
                       <option value="Ясно">Ясно</option>
                       <option value="Дождь">Дождь</option>
-                      <option value="Снег">Снег</option>
+                      <option value="Вечер">Вечер</option>
                       <option value="Жара">Жара</option>
                       <option value="Холодно">Холодно</option>
                     </select>
