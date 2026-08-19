@@ -77,7 +77,10 @@ const MOTIVATIONAL_PHRASES = [
 
 // ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 const genId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-const stripZ = (iso) => (iso && iso.endsWith('Z')) ? iso.slice(0, -1) : iso;
+const stripZ = (iso) => {
+  if (typeof iso !== 'string') return iso;
+  return iso.endsWith('Z') ? iso.slice(0, -1) : iso;
+};
 const formatPLN = (val) => (val ?? 0).toFixed(2) + ' zł';
 const formatDate = (iso) => new Date(stripZ(iso)).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 const formatDateTime = (iso) => new Date(stripZ(iso)).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -90,6 +93,12 @@ const getWeekStart = (dateStr) => {
   monday.setDate(d.getDate() - diff);
   monday.setHours(0,0,0,0);
   return monday.toISOString();
+};
+const isValidShift = (shift) => {
+  if (!shift || !shift.start || !shift.end) return false;
+  const start = new Date(stripZ(shift.start));
+  const end = new Date(stripZ(shift.end));
+  return !isNaN(start.getTime()) && !isNaN(end.getTime()) && end > start;
 };
 
 // ---------- НАЛОГИ ----------
@@ -298,8 +307,8 @@ export default function CourierTracker() {
 
   const filteredShifts = useMemo(() => {
     const [start, end] = getRange(filterType);
-    if (start === null && end === null) return shifts;
-    return shifts.filter(s => s.start >= start && s.start < end);
+    if (start === null && end === null) return shifts.filter(isValidShift);
+    return shifts.filter(s => isValidShift(s) && s.start >= start && s.start < end);
   }, [shifts, filterType, customStart, customEnd]);
 
   const filteredExpenses = useMemo(() => {
@@ -372,7 +381,7 @@ export default function CourierTracker() {
   const todayNet = useMemo(() => {
     const [start, end] = getRange('today');
     const todayOrders = orders.filter(o => new Date(stripZ(o.date)) >= new Date(start) && new Date(stripZ(o.date)) < new Date(end));
-    const todayShifts = shifts.filter(s => s.start >= start && s.start < end);
+    const todayShifts = shifts.filter(s => isValidShift(s) && s.start >= start && s.start < end);
     const todayExpenses = expenses.filter(e => e.date >= start && e.date < end);
     const netAfter = todayOrders.reduce((sum, o) => sum + (showZus ? getNetAfterTax(o, settings) : o.amount), 0);
     const commission = computeWeeklyCommissions(todayOrders, settings).reduce((sum, w) => sum + w.commission, 0);
@@ -384,7 +393,7 @@ export default function CourierTracker() {
   const weekNet = useMemo(() => {
     const [start, end] = getRange('week');
     const weekOrders = orders.filter(o => new Date(stripZ(o.date)) >= new Date(start) && new Date(stripZ(o.date)) < new Date(end));
-    const weekShifts = shifts.filter(s => s.start >= start && s.start < end);
+    const weekShifts = shifts.filter(s => isValidShift(s) && s.start >= start && s.start < end);
     const weekExpenses = expenses.filter(e => e.date >= start && e.date < end);
     const netAfter = weekOrders.reduce((sum, o) => sum + (showZus ? getNetAfterTax(o, settings) : o.amount), 0);
     const commission = computeWeeklyCommissions(weekOrders, settings).reduce((sum, w) => sum + w.commission, 0);
@@ -1553,11 +1562,12 @@ export default function CourierTracker() {
               <Plus size={16} /> Добавить смену
             </button>
 
-            {shifts.length === 0 ? (
+            {shifts.filter(isValidShift).length === 0 ? (
               <p style={{ textAlign: 'center', color: '#52525b', padding: '40px 0' }}>Нет смен</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {shifts
+                  .filter(isValidShift)
                   .slice()
                   .sort((a, b) => new Date(stripZ(b.start)) - new Date(stripZ(a.start)))
                   .map(s => {
