@@ -762,7 +762,26 @@ export default function CourierTracker() {
         return 'Вводите сумму дохода.';
     }
   };
-
+const weekGroups = useMemo(() => {
+    const groups = new Map();
+    shifts.forEach(s => {
+      const d = new Date(stripZ(s.start));
+      const day = d.getDay() === 0 ? 7 : d.getDay();
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - day + 1);
+      monday.setHours(0,0,0,0);
+      const key = monday.toISOString();
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(s);
+    });
+    return Array.from(groups.entries())
+      .sort((a,b) => new Date(b[0]) - new Date(a[0]))
+      .map(([weekStart, weekShifts]) => {
+        const weekEnd = new Date(new Date(weekStart).getTime() + 7*24*3600*1000);
+        const totalHours = weekShifts.reduce((sum, s) => sum + (new Date(stripZ(s.end)) - new Date(stripZ(s.start))) / 3600000, 0);
+        return { weekStart, weekShifts, weekEnd, totalHours };
+      });
+  }, [shifts]);
   const miniButtonStyle = {
     padding: '8px 12px',
     borderRadius: '8px',
