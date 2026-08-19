@@ -6,7 +6,7 @@ import {
 import {
   Plus, BarChart3, List, Settings as SettingsIcon,
   Play, Square, Trash2, Download, ChevronDown, ChevronUp, X,
-  Camera, Fuel, Wrench, Check, RefreshCw
+  Camera, Fuel, Wrench, Check, RefreshCw, Pencil
 } from 'lucide-react';
 
 // ---------- ХРАНИЛИЩЕ ----------
@@ -22,7 +22,15 @@ const storage = getStorage();
 const loadState = () => {
   try {
     const saved = storage?.getItem('courierAppState');
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        orders: parsed.orders || [],
+        shifts: parsed.shifts || [],
+        expenses: parsed.expenses || [],
+        settings: parsed.settings || DEFAULT_SETTINGS,
+      };
+    }
   } catch (e) {}
   return null;
 };
@@ -160,7 +168,7 @@ export default function CourierTracker() {
   const { orders, shifts, expenses, settings } = state;
 
   const [tab, setTab] = useState('entry');
-  const [bruttoMode, setBruttoMode] = useState(true);
+  const [bruttoMode, setBruttoMode] = useState(true); // только для статистики
 
   const [filterType, setFilterType] = useState('all');
   const [customStart, setCustomStart] = useState('');
@@ -179,8 +187,12 @@ export default function CourierTracker() {
   const [expenseAmount, setExpenseAmount] = useState('');
   const [expenseNote, setExpenseNote] = useState('');
 
+  const [editingOrder, setEditingOrder] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+
   const fileInputRef = useRef(null);
-    const getLocalDateTimeString = () => {
+
+  const getLocalDateTimeString = () => {
     const d = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -247,7 +259,7 @@ export default function CourierTracker() {
         start = customStart ? new Date(customStart).toISOString() : new Date(0).toISOString();
         end = customEnd ? new Date(customEnd).toISOString() : new Date(8640000000000000).toISOString();
         break;
-       case 'all':
+      case 'all':
       default:
         start = null;
         end = null;
@@ -268,18 +280,19 @@ export default function CourierTracker() {
   }, [orders, filterType, customStart, customEnd, serviceFilter]);
 
   // Фильтрация смен
- const filteredShifts = useMemo(() => {
+  const filteredShifts = useMemo(() => {
     const [start, end] = getRange(filterType);
     if (start === null && end === null) return shifts;
     return shifts.filter(s => s.start >= start && s.start < end);
   }, [shifts, filterType, customStart, customEnd]);
 
   // Фильтрация расходов
-      const filteredExpenses = useMemo(() => {
+  const filteredExpenses = useMemo(() => {
     const [start, end] = getRange(filterType);
     if (start === null && end === null) return expenses;
     return expenses.filter(e => e.date >= start && e.date < end);
   }, [expenses, filterType, customStart, customEnd]);
+
   // Статистика
   const stats = useMemo(() => {
     const grossIncome = filteredOrders.reduce((sum, o) => sum + o.amount + (o.tips || 0), 0);
@@ -325,6 +338,16 @@ export default function CourierTracker() {
     };
   }, [filteredOrders, filteredShifts, filteredExpenses, settings, filterType]);
 
+  // Отображаемый доход с учётом переключателя только для Uber Eats
+  const displayIncome = useMemo(() => {
+    return filteredOrders.reduce((sum, o) => {
+      const amount = o.service === 'Uber Eats'
+        ? (bruttoMode ? (o.amount + (o.tips || 0)) : getNetAfterTax(o, settings))
+        : (o.amount + (o.tips || 0));
+      return sum + amount;
+    }, 0);
+  }, [filteredOrders, bruttoMode, settings]);
+
   // Рекорды
   const records = useMemo(() => {
     if (filteredOrders.length === 0) return null;
@@ -351,7 +374,9 @@ export default function CourierTracker() {
     const map = new Map();
     filteredOrders.forEach(o => {
       const day = formatDate(o.date);
-      const value = bruttoMode ? (o.amount + (o.tips || 0)) : getNetAfterTax(o, settings);
+      const value = o.service === 'Uber Eats'
+        ? (bruttoMode ? (o.amount + (o.tips || 0)) : getNetAfterTax(o, settings))
+        : (o.amount + (o.tips || 0));
       map.set(day, (map.get(day) || 0) + value);
     });
     return Array.from(map.entries()).map(([day, value]) => ({ day, value: Math.round(value * 100) / 100 }));
@@ -360,7 +385,9 @@ export default function CourierTracker() {
   const serviceData = useMemo(() => {
     const map = new Map();
     filteredOrders.forEach(o => {
-      const value = bruttoMode ? (o.amount + (o.tips || 0)) : getNetAfterTax(o, settings);
+      const value = o.service === 'Uber Eats'
+        ? (bruttoMode ? (o.amount + (o.tips || 0)) : getNetAfterTax(o, settings))
+        : (o.amount + (o.tips || 0));
       map.set(o.service, (map.get(o.service) || 0) + value);
     });
     return Array.from(map.entries()).map(([service, value]) => ({ name: service, value: Math.round(value * 100) / 100 }));
@@ -372,9 +399,20 @@ export default function CourierTracker() {
   const handleOrderSubmit = (e) => {
     e.preventDefault();
     if (!orderForm.amount) return;
+
+    let orderDate;
+    try {
+      orderDate = new Date(orderForm.date);
+      if (isNaN(orderDate.getTime())) {
+        orderDate = new Date();
+      }
+    } catch (error) {
+      orderDate = new Date();
+    }
+
     const newOrder = {
       id: genId(),
-      date: new Date(orderForm.date).toISOString(),
+      date: orderDate.toISOString(),
       service: orderForm.service,
       amount: parseFloat(orderForm.amount),
       km1: parseFloat(orderForm.km1) || 0,
@@ -401,6 +439,32 @@ export default function CourierTracker() {
     setShowExtraFields(false);
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 1200);
+  };
+
+  const handleEditOrder = (order) => {
+    setEditingOrder({
+      ...order,
+      date: new Date(order.date).toISOString().slice(0,16),
+    });
+    setShowEditModal(true);
+  };
+
+  const handleEditSave = () => {
+    if (!editingOrder) return;
+    const updatedOrder = {
+      ...editingOrder,
+      date: new Date(editingOrder.date).toISOString(),
+      amount: parseFloat(editingOrder.amount),
+      km1: parseFloat(editingOrder.km1) || 0,
+      km2: parseFloat(editingOrder.km2) || 0,
+      tips: parseFloat(editingOrder.tips) || 0,
+    };
+    setState(prev => ({
+      ...prev,
+      orders: prev.orders.map(o => o.id === updatedOrder.id ? updatedOrder : o),
+    }));
+    setShowEditModal(false);
+    setEditingOrder(null);
   };
 
   const handleStartShift = () => {
@@ -607,13 +671,13 @@ export default function CourierTracker() {
       padding: 0,
       display: 'flex',
       flexDirection: 'column',
+      touchAction: 'manipulation',
     }}>
-       <div style={{
+      <div style={{
         maxWidth: '100%',
         width: '100%',
         padding: 'calc(env(safe-area-inset-top) + 16px) 16px 90px',
         boxSizing: 'border-box',
-     
       }}>
         {/* Шапка */}
         <header style={{
@@ -638,7 +702,7 @@ export default function CourierTracker() {
             overflow: 'hidden',
             textOverflow: 'ellipsis',
           }}>
-            {formatPLN(stats.grossIncome)}
+            {formatPLN(displayIncome)}
           </div>
         </header>
 
@@ -805,7 +869,7 @@ export default function CourierTracker() {
                       background: '#000000',
                       border: '1px solid #3f3f46',
                       color: '#fafafa',
-                      fontSize: '1rem',
+                      fontSize: '16px',
                       boxSizing: 'border-box',
                     }}
                   />
@@ -830,7 +894,7 @@ export default function CourierTracker() {
                       background: '#000000',
                       border: '1px solid #3f3f46',
                       color: '#fafafa',
-                      fontSize: '1rem',
+                      fontSize: '16px',
                       boxSizing: 'border-box',
                     }}
                   />
@@ -912,6 +976,7 @@ export default function CourierTracker() {
                         background: '#000000',
                         border: '1px solid #3f3f46',
                         color: '#fafafa',
+                        fontSize: '16px',
                         boxSizing: 'border-box',
                       }}
                     />
@@ -931,6 +996,7 @@ export default function CourierTracker() {
                         background: '#000000',
                         border: '1px solid #3f3f46',
                         color: '#fafafa',
+                        fontSize: '16px',
                         boxSizing: 'border-box',
                       }}
                     />
@@ -949,6 +1015,7 @@ export default function CourierTracker() {
                         background: '#000000',
                         border: '1px solid #3f3f46',
                         color: '#fafafa',
+                        fontSize: '16px',
                         boxSizing: 'border-box',
                       }}
                     />
@@ -965,15 +1032,17 @@ export default function CourierTracker() {
                         background: '#000000',
                         border: '1px solid #3f3f46',
                         color: '#fafafa',
+                        fontSize: '16px',
                         boxSizing: 'border-box',
                       }}
                     >
                       <option value="">-</option>
                       <option value="Ясно">Ясно</option>
                       <option value="Дождь">Дождь</option>
-                      <option value="Вечер">Вечер</option>
+                      <option value="Снег">Снег</option>
                       <option value="Жара">Жара</option>
                       <option value="Холодно">Холодно</option>
+                      <option value="Вечер">Вечер</option>
                     </select>
                   </div>
                   <div>
@@ -990,6 +1059,7 @@ export default function CourierTracker() {
                         background: '#000000',
                         border: '1px solid #3f3f46',
                         color: '#fafafa',
+                        fontSize: '16px',
                         boxSizing: 'border-box',
                       }}
                     />
@@ -1007,6 +1077,7 @@ export default function CourierTracker() {
                         background: '#000000',
                         border: '1px solid #3f3f46',
                         color: '#fafafa',
+                        fontSize: '16px',
                         resize: 'vertical',
                         boxSizing: 'border-box',
                       }}
@@ -1022,7 +1093,7 @@ export default function CourierTracker() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Статистика</h2>
 
-            {/* Переключатель Брутто/Нетто */}
+            {/* Переключатель Брутто/Нетто (только для Uber Eats) */}
             <div style={{
               display: 'flex',
               gap: '4px',
@@ -1084,8 +1155,8 @@ export default function CourierTracker() {
             </div>
             {filterType === 'custom' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} style={{ padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', boxSizing: 'border-box' }} />
-                <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} style={{ padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', boxSizing: 'border-box' }} />
+                <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} style={{ padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }} />
+                <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} style={{ padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }} />
               </div>
             )}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
@@ -1099,7 +1170,7 @@ export default function CourierTracker() {
 
             {/* Сводные карточки */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
-              <StatCard label="Доход" value={formatPLN(stats.grossIncome)} />
+              <StatCard label="Доход" value={formatPLN(displayIncome)} />
               <StatCard label="Чистыми" value={formatPLN(stats.totalNetProfit)} />
               <StatCard label="Доход/час" value={stats.incomePerHour ? formatPLN(stats.incomePerHour) : '—'} />
               <StatCard label="Средний чек" value={formatPLN(stats.avgCheck)} />
@@ -1221,8 +1292,8 @@ export default function CourierTracker() {
               ))}
               {filterType === 'custom' && (
                 <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                  <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} style={{ width: '110px', padding: '6px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '0.75rem' }} />
-                  <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} style={{ width: '110px', padding: '6px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '0.75rem' }} />
+                  <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} style={{ width: '110px', padding: '6px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px' }} />
+                  <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} style={{ width: '110px', padding: '6px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px' }} />
                 </div>
               )}
             </div>
@@ -1248,6 +1319,9 @@ export default function CourierTracker() {
                         <span style={{ fontWeight: '700', fontFamily: '"SF Mono", "Roboto Mono", monospace', fontSize: '0.95rem' }}>
                           {formatPLN(o.amount + (o.tips || 0))}
                         </span>
+                        <button onClick={() => handleEditOrder(o)} style={{ background: 'none', border: 'none', color: '#22d3ee', cursor: 'pointer', padding: '4px' }}>
+                          <Pencil size={16} />
+                        </button>
                         <button onClick={() => handleDeleteOrder(o.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}>
                           <Trash2 size={16} />
                         </button>
@@ -1379,7 +1453,7 @@ export default function CourierTracker() {
       {showScreenshotModal && (
         <Modal onClose={() => setShowScreenshotModal(false)}>
           <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', marginTop: 0 }}>Загрузка скриншота</h3>
-          <input type="file" accept="image/*" onChange={handleScreenshotUpload} style={{ width: '100%', padding: '10px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', borderRadius: '8px', marginBottom: '12px', boxSizing: 'border-box' }} />
+          <input type="file" accept="image/*" onChange={handleScreenshotUpload} style={{ width: '100%', padding: '10px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', borderRadius: '8px', marginBottom: '12px', boxSizing: 'border-box', fontSize: '16px' }} />
           {screenshotLoading && <p style={{ color: '#a1a1aa' }}>Распознавание...</p>}
           {screenshotParsed && (
             <div>
@@ -1401,7 +1475,7 @@ export default function CourierTracker() {
         <Modal onClose={() => setShowFuelModal(false)}>
           <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', marginTop: 0 }}>Завершение смены</h3>
           <p style={{ color: '#a1a1aa', marginBottom: '8px' }}>Расход на топливо (PLN):</p>
-          <input type="number" step="0.01" value={fuelInput} onChange={(e) => setFuelInput(e.target.value)} placeholder="0.00" style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', marginBottom: '12px', boxSizing: 'border-box' }} />
+          <input type="number" step="0.01" value={fuelInput} onChange={(e) => setFuelInput(e.target.value)} placeholder="0.00" style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', marginBottom: '12px', boxSizing: 'border-box', fontSize: '16px' }} />
           <button onClick={handleFuelSave} style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#10b981', color: '#022c22', border: 'none', fontWeight: '700', cursor: 'pointer' }}>Сохранить</button>
         </Modal>
       )}
@@ -1409,9 +1483,71 @@ export default function CourierTracker() {
       {showExpenseModal && (
         <Modal onClose={() => setShowExpenseModal(false)}>
           <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', marginTop: 0 }}>Добавить расход</h3>
-          <input type="number" step="0.01" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} placeholder="Сумма, PLN" style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', marginBottom: '8px', boxSizing: 'border-box' }} />
-          <input type="text" value={expenseNote} onChange={(e) => setExpenseNote(e.target.value)} placeholder="Описание (масло, ремонт...)" style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', marginBottom: '12px', boxSizing: 'border-box' }} />
+          <input type="number" step="0.01" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} placeholder="Сумма, PLN" style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', marginBottom: '8px', boxSizing: 'border-box', fontSize: '16px' }} />
+          <input type="text" value={expenseNote} onChange={(e) => setExpenseNote(e.target.value)} placeholder="Описание (масло, ремонт...)" style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', marginBottom: '12px', boxSizing: 'border-box', fontSize: '16px' }} />
           <button onClick={handleAddExpense} style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#10b981', color: '#022c22', border: 'none', fontWeight: '700', cursor: 'pointer' }}>Сохранить</button>
+        </Modal>
+      )}
+
+      {showEditModal && editingOrder && (
+        <Modal onClose={() => setShowEditModal(false)}>
+          <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', marginTop: 0 }}>Редактировать заказ</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Сервис</label>
+              <select
+                value={editingOrder.service}
+                onChange={(e) => setEditingOrder({...editingOrder, service: e.target.value})}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+              >
+                {allServices.map(s => <option key={s.name} value={s.name}>{s.icon} {s.name}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Доход (PLN)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editingOrder.amount}
+                  onChange={(e) => setEditingOrder({...editingOrder, amount: e.target.value})}
+                  style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Км (всего)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={editingOrder.km1}
+                  onChange={(e) => setEditingOrder({...editingOrder, km1: e.target.value})}
+                  style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+                />
+              </div>
+            </div>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Дата и время</label>
+              <input
+                type="datetime-local"
+                value={editingOrder.date}
+                onChange={(e) => setEditingOrder({...editingOrder, date: e.target.value})}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Чаевые (PLN)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={editingOrder.tips}
+                onChange={(e) => setEditingOrder({...editingOrder, tips: e.target.value})}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+              />
+            </div>
+            <button onClick={handleEditSave} style={{ padding: '12px', borderRadius: '8px', background: '#10b981', color: '#022c22', border: 'none', fontWeight: '700', cursor: 'pointer' }}>
+              Сохранить изменения
+            </button>
+          </div>
         </Modal>
       )}
     </div>
@@ -1531,6 +1667,7 @@ function SettingRow({ label, value, onChange }) {
           color: '#fafafa',
           textAlign: 'right',
           flexShrink: 0,
+          fontSize: '16px',
         }}
       />
     </div>
@@ -1547,3 +1684,31 @@ function periodLabel(period) {
     default: return '';
   }
 }
+📁 Обновлённый index.html
+html
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <link rel="manifest" href="./manifest.json" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Курьер" />
+  <title>Курьер</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000000;
+    }
+    input, select, textarea {
+      font-size: 16px !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="./src/main.jsx"></script>
+</body>
+</html>
