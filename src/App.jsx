@@ -45,9 +45,9 @@ const DEFAULT_SETTINGS = {
   ryczaltRate: 0.085,
   uzRate: 0.277,
   zusFixed: 110,
-  transitionDate: '2026-09-01', // Uber Eats
+  transitionDate: '2026-09-01',
   glovoUZStartDate: '2025-01-01',
-  boltUZStartDate: null, // будущая дата, по умолчанию не активна
+  boltUZStartDate: null,
   stuartUZStartDate: null,
   partnerCommissionSingle: 29.90,
   partnerCommissionMulti: 49.90,
@@ -77,12 +77,13 @@ const MOTIVATIONAL_PHRASES = [
 
 // ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 const genId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+const stripZ = (iso) => (iso && iso.endsWith('Z')) ? iso.slice(0, -1) : iso;
 const formatPLN = (val) => (val ?? 0).toFixed(2) + ' zł';
-const formatDate = (iso) => new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
-const formatDateTime = (iso) => new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-const formatTime = (iso) => new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+const formatDate = (iso) => new Date(stripZ(iso)).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+const formatDateTime = (iso) => new Date(stripZ(iso)).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+const formatTime = (iso) => new Date(stripZ(iso)).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 const getWeekStart = (dateStr) => {
-  const d = new Date(dateStr);
+  const d = new Date(stripZ(dateStr));
   const day = d.getDay();
   const diff = (day === 0 ? 6 : day - 1);
   const monday = new Date(d);
@@ -91,22 +92,20 @@ const getWeekStart = (dateStr) => {
   return monday.toISOString();
 };
 
-// ---------- НАЛОГИ (упрощённые) ----------
+// ---------- НАЛОГИ ----------
 const getBaseNet = (order) => {
-  // Пользователь всегда вводит сумму после VAT (нетто)
   return order.amount;
 };
 
 const getTax = (order, settings) => {
   const baseNet = getBaseNet(order);
-  const orderDate = new Date(order.date);
+  const orderDate = new Date(stripZ(order.date));
   switch(order.service) {
     case 'Uber Eats': {
       const isBefore = orderDate < new Date(settings.transitionDate);
       return isBefore ? baseNet * settings.ryczaltRate : baseNet * settings.uzRate;
     }
     case 'Bolt Food': {
-      // Если задана дата перехода и она наступила, используем UZ, иначе Ryczałt
       if (settings.boltUZStartDate && orderDate >= new Date(settings.boltUZStartDate)) {
         return baseNet * settings.uzRate;
       }
@@ -196,6 +195,8 @@ export default function CourierTracker() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditExtra, setShowEditExtra] = useState(false);
 
+  const [selectedOrderIds, setSelectedOrderIds] = useState(new Set());
+
   const fileInputRef = useRef(null);
 
   const getLocalDateTimeString = () => {
@@ -235,6 +236,11 @@ export default function CourierTracker() {
   const getServiceInfo = (name) => {
     return allServices.find(s => s.name === name) || { name, color: '#71717A', icon: '📦' };
   };
+
+  // Сброс выбора при изменении фильтров
+  useEffect(() => {
+    setSelectedOrderIds(new Set());
+  }, [filterType, serviceFilter]);
 
   // Функция получения диапазона дат
   const getRange = (type) => {
@@ -280,19 +286,21 @@ export default function CourierTracker() {
       const inService = serviceFilter === 'all' || o.service === serviceFilter;
       if (!inService) return false;
       if (start === null && end === null) return true;
-      const d = new Date(o.date).toISOString();
+      const d = new Date(stripZ(o.date)).toISOString();
       return d >= start && d < end;
     });
-    result = result.sort((a, b) => new Date(b.date) - new Date(a.date));
+    result = result.sort((a, b) => new Date(stripZ(b.date)) - new Date(stripZ(a.date)));
     return result;
   }, [orders, filterType, customStart, customEnd, serviceFilter]);
 
+  // Фильтрация смен
   const filteredShifts = useMemo(() => {
     const [start, end] = getRange(filterType);
     if (start === null && end === null) return shifts;
     return shifts.filter(s => s.start >= start && s.start < end);
   }, [shifts, filterType, customStart, customEnd]);
 
+  // Фильтрация расходов
   const filteredExpenses = useMemo(() => {
     const [start, end] = getRange(filterType);
     if (start === null && end === null) return expenses;
@@ -322,15 +330,15 @@ export default function CourierTracker() {
 
     let zusDeduction = 0;
     if (filterType === 'month') {
-      const hasUberBefore = filteredOrders.some(o => o.service === 'Uber Eats' && new Date(o.date) < new Date(settings.transitionDate));
+      const hasUberBefore = filteredOrders.some(o => o.service === 'Uber Eats' && new Date(stripZ(o.date)) < new Date(settings.transitionDate));
       if (hasUberBefore) zusDeduction = settings.zusFixed;
     }
 
     const totalNetProfit = netAfterTax - totalCommission - totalFuel - totalMaintenance - zusDeduction;
 
     const totalHours = filteredShifts.reduce((sum, s) => {
-      const start = new Date(s.start);
-      const end = new Date(s.end);
+      const start = new Date(stripZ(s.start));
+      const end = new Date(stripZ(s.end));
       return sum + (end - start) / 3600000;
     }, 0);
 
@@ -357,7 +365,7 @@ export default function CourierTracker() {
   // Чистый доход за сегодня и неделю
   const todayNet = useMemo(() => {
     const [start, end] = getRange('today');
-    const todayOrders = orders.filter(o => new Date(o.date) >= new Date(start) && new Date(o.date) < new Date(end));
+    const todayOrders = orders.filter(o => new Date(stripZ(o.date)) >= new Date(start) && new Date(stripZ(o.date)) < new Date(end));
     const todayShifts = shifts.filter(s => s.start >= start && s.start < end);
     const todayExpenses = expenses.filter(e => e.date >= start && e.date < end);
     const netAfter = todayOrders.reduce((sum, o) => sum + (showZus ? getNetAfterTax(o, settings) : o.amount), 0);
@@ -369,7 +377,7 @@ export default function CourierTracker() {
 
   const weekNet = useMemo(() => {
     const [start, end] = getRange('week');
-    const weekOrders = orders.filter(o => new Date(o.date) >= new Date(start) && new Date(o.date) < new Date(end));
+    const weekOrders = orders.filter(o => new Date(stripZ(o.date)) >= new Date(start) && new Date(stripZ(o.date)) < new Date(end));
     const weekShifts = shifts.filter(s => s.start >= start && s.start < end);
     const weekExpenses = expenses.filter(e => e.date >= start && e.date < end);
     const netAfter = weekOrders.reduce((sum, o) => sum + (showZus ? getNetAfterTax(o, settings) : o.amount), 0);
@@ -461,7 +469,6 @@ export default function CourierTracker() {
       weather: '',
       problem: '',
       comment: '',
-      // дату не сбрасываем
       date: orderForm.date,
     }));
     setShowExtraFields(false);
@@ -472,7 +479,7 @@ export default function CourierTracker() {
   const handleEditOrder = (order) => {
     setEditingOrder({
       ...order,
-      date: new Date(order.date).toISOString().slice(0,16),
+      date: new Date(stripZ(order.date)).toISOString().slice(0,16),
     });
     setShowEditExtra(false);
     setShowEditModal(true);
@@ -574,14 +581,13 @@ export default function CourierTracker() {
   };
 
   const handleExportCSV = () => {
-    const headers = ['Дата', 'Сервис', 'Сумма', 'Чаевые', 'Км до ресторана', 'Км до клиента', 'Тип заказа', 'Погода', 'Проблемы', 'Комментарий'];
+    const headers = ['Дата', 'Сервис', 'Сумма', 'Чаевые', 'Км (всего)', 'Тип заказа', 'Погода', 'Проблемы', 'Комментарий'];
     const rows = filteredOrders.map(o => [
       o.date,
       o.service,
       o.amount,
       o.tips || 0,
-      o.km1 || 0,
-      o.km2 || 0,
+      (o.km1 || 0) + (o.km2 || 0),
       o.orderType || '',
       o.weather || '',
       o.problem || '',
@@ -621,8 +627,8 @@ export default function CourierTracker() {
               service: obj['Сервис'] || 'Custom',
               amount: parseFloat(obj['Сумма']) || 0,
               tips: parseFloat(obj['Чаевые']) || 0,
-              km1: parseFloat(obj['Км до ресторана']) || 0,
-              km2: parseFloat(obj['Км до клиента']) || 0,
+              km1: parseFloat(obj['Км (всего)']) || 0,
+              km2: 0,
               orderType: obj['Тип заказа'] || '',
               weather: obj['Погода'] || '',
               problem: obj['Проблемы'] || '',
@@ -644,6 +650,32 @@ export default function CourierTracker() {
 
   const handleDeleteShift = (id) => {
     setState(prev => ({ ...prev, shifts: prev.shifts.filter(s => s.id !== id) }));
+  };
+
+  // Выбор заказов
+  const toggleOrderSelection = (id) => {
+    setSelectedOrderIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllOrders = () => {
+    setSelectedOrderIds(new Set(filteredOrders.map(o => o.id)));
+  };
+
+  const clearSelection = () => {
+    setSelectedOrderIds(new Set());
+  };
+
+  const deleteSelectedOrders = () => {
+    setState(prev => ({
+      ...prev,
+      orders: prev.orders.filter(o => !selectedOrderIds.has(o.id)),
+    }));
+    setSelectedOrderIds(new Set());
   };
 
   const handleSettingsChange = (key, value) => {
@@ -678,7 +710,7 @@ export default function CourierTracker() {
       case 'Stuart':
         return 'Вводите сумму без VAT (уже чистая).';
       case 'Glovo': {
-        const before = new Date(orderForm.date) < new Date(settings.glovoUZStartDate);
+        const before = new Date(stripZ(orderForm.date)) < new Date(settings.glovoUZStartDate);
         return before
           ? 'Вводите сумму без VAT. До даты перехода на UZ облагается только Ryczałt.'
           : 'Вводите сумму без VAT. После перехода на UZ облагается ZUS.';
@@ -688,6 +720,17 @@ export default function CourierTracker() {
       default:
         return 'Вводите сумму дохода.';
     }
+  };
+
+  const miniButtonStyle = {
+    padding: '8px 12px',
+    borderRadius: '8px',
+    background: '#1a1a1a',
+    border: '1px solid #3f3f46',
+    color: '#d4d4d8',
+    cursor: 'pointer',
+    fontSize: '0.8rem',
+    whiteSpace: 'nowrap',
   };
 
   return (
@@ -1339,6 +1382,25 @@ export default function CourierTracker() {
               )}
             </div>
 
+            {/* Панель выбора */}
+            <div style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '8px',
+              alignItems: 'center',
+              background: '#111111',
+              padding: '10px',
+              borderRadius: '12px',
+              border: '1px solid #27272a',
+              marginBottom: '10px',
+            }}>
+              <button onClick={selectAllOrders} style={miniButtonStyle}>Выбрать все</button>
+              <button onClick={clearSelection} style={miniButtonStyle}>Снять выбор</button>
+              <button onClick={deleteSelectedOrders} disabled={selectedOrderIds.size === 0} style={{...miniButtonStyle, background: '#7f1d1d', color: '#fecaca', opacity: selectedOrderIds.size === 0 ? 0.5 : 1}}>
+                Удалить выбранные ({selectedOrderIds.size})
+              </button>
+            </div>
+
             {/* Список заказов */}
             {filteredOrders.length === 0 ? (
               <p style={{ textAlign: 'center', color: '#52525b', padding: '40px 0', margin: 0 }}>Нет заказов за этот период</p>
@@ -1346,9 +1408,27 @@ export default function CourierTracker() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {filteredOrders.map(o => {
                   const info = getServiceInfo(o.service);
+                  const isSelected = selectedOrderIds.has(o.id);
                   return (
-                    <div key={o.id} style={{ background: '#111111', borderRadius: '12px', padding: '12px', border: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                    <div key={o.id} style={{
+                      background: isSelected ? '#1a1a2e' : '#111111',
+                      borderRadius: '12px',
+                      padding: '12px',
+                      border: `1px solid ${isSelected ? '#22d3ee' : '#27272a'}`,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                    }} onClick={() => toggleOrderSelection(o.id)}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleOrderSelection(o.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ width: 18, height: 18, accentColor: '#22d3ee', flexShrink: 0 }}
+                        />
                         <span style={{ fontSize: '1.5rem', flexShrink: 0 }}>{info.icon}</span>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: '600', fontSize: '0.9rem', color: info.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.service}</div>
@@ -1360,10 +1440,10 @@ export default function CourierTracker() {
                         <span style={{ fontWeight: '700', fontFamily: '"SF Mono", "Roboto Mono", monospace', fontSize: '0.95rem' }}>
                           {formatPLN(o.amount + (o.tips || 0))}
                         </span>
-                        <button onClick={() => handleEditOrder(o)} style={{ background: 'none', border: 'none', color: '#22d3ee', cursor: 'pointer', padding: '4px' }}>
+                        <button onClick={(e) => { e.stopPropagation(); handleEditOrder(o); }} style={{ background: 'none', border: 'none', color: '#22d3ee', cursor: 'pointer', padding: '4px' }}>
                           <Pencil size={16} />
                         </button>
-                        <button onClick={() => handleDeleteOrder(o.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}>
+                        <button onClick={(e) => { e.stopPropagation(); handleDeleteOrder(o.id); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}>
                           <Trash2 size={16} />
                         </button>
                       </div>
