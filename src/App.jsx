@@ -6,7 +6,7 @@ import {
 import {
   Plus, BarChart3, List, Settings as SettingsIcon,
   Play, Square, Trash2, Download, ChevronDown, ChevronUp, X,
-  Camera, Fuel, Wrench, Check, RefreshCw, Pencil
+  Camera, Fuel, Wrench, Check, RefreshCw, Pencil, Calendar
 } from 'lucide-react';
 
 // ---------- ХРАНИЛИЩЕ ----------
@@ -55,11 +55,11 @@ const DEFAULT_SETTINGS = {
 };
 
 const FIXED_SERVICES = [
-  { name: 'Uber Eats', color: '#00897B', icon: '🚗' },
-  { name: 'Stuart', color: '#D81B60', icon: '🛵' },
-  { name: 'Bolt Food', color: '#4CAF50', icon: '⚡' },
-  { name: 'Pyszne.pl', color: '#E53935', icon: '🍽️' },
-  { name: 'Glovo', color: '#EF6C00', icon: '🛍️' },
+  { name: 'Uber Eats', color: '#008000', icon: '🚗' },
+  { name: 'Stuart', color: '#00BFFF', icon: '🛵' },
+  { name: 'Bolt Food', color: '#7CFC00', icon: '⚡' },
+  { name: 'Pyszne.pl', color: '#FF8C00', icon: '🍽️' },
+  { name: 'Glovo', color: '#FFD700', icon: '🛍️' },
 ];
 
 const PARTNER_SERVICES = ['Uber Eats', 'Bolt Food', 'Stuart', 'Pyszne.pl'];
@@ -197,6 +197,12 @@ export default function CourierTracker() {
 
   const [selectedOrderIds, setSelectedOrderIds] = useState(new Set());
 
+  const [showShiftModal, setShowShiftModal] = useState(false);
+  const [shiftDate, setShiftDate] = useState(new Date().toISOString().slice(0,10));
+  const [shiftStartTime, setShiftStartTime] = useState('09:00');
+  const [shiftEndTime, setShiftEndTime] = useState('17:00');
+  const [shiftFuel, setShiftFuel] = useState('');
+
   const fileInputRef = useRef(null);
 
   const getLocalDateTimeString = () => {
@@ -329,9 +335,19 @@ export default function CourierTracker() {
     const totalMaintenance = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
 
     let zusDeduction = 0;
-    if (filterType === 'month') {
-      const hasUberBefore = filteredOrders.some(o => o.service === 'Uber Eats' && new Date(stripZ(o.date)) < new Date(settings.transitionDate));
-      if (hasUberBefore) zusDeduction = settings.zusFixed;
+    if (filterType === 'month' && showZus) {
+      const servicesOnRyczalt = new Set();
+      filteredOrders.forEach(o => {
+        const date = new Date(stripZ(o.date));
+        if (o.service === 'Uber Eats') {
+          if (date < new Date(settings.transitionDate)) servicesOnRyczalt.add('uber');
+        } else if (o.service === 'Bolt Food') {
+          if (!settings.boltUZStartDate || date < new Date(settings.boltUZStartDate)) servicesOnRyczalt.add('bolt');
+        } else if (o.service === 'Stuart') {
+          if (!settings.stuartUZStartDate || date < new Date(settings.stuartUZStartDate)) servicesOnRyczalt.add('stuart');
+        }
+      });
+      if (servicesOnRyczalt.size > 0) zusDeduction = settings.zusFixed;
     }
 
     const totalNetProfit = netAfterTax - totalCommission - totalFuel - totalMaintenance - zusDeduction;
@@ -428,7 +444,7 @@ export default function CourierTracker() {
     return Array.from(map.entries()).map(([service, value]) => ({ name: service, value: Math.round(value * 100) / 100 }));
   }, [filteredOrders, settings, showZus]);
 
-  const COLORS = ['#00897B', '#D81B60', '#4CAF50', '#E53935', '#EF6C00', '#5E35B1', '#00838F', '#F57F17'];
+  const COLORS = ['#008000', '#00BFFF', '#7CFC00', '#FF8C00', '#FFD700', '#5E35B1', '#00838F', '#F57F17'];
 
   // Обработчики
   const handleOrderSubmit = (e) => {
@@ -528,6 +544,27 @@ export default function CourierTracker() {
     setActiveShiftStart(null);
     setFuelInput('');
     setShowFuelModal(false);
+  };
+
+  const handleAddManualShift = () => {
+    const startDate = new Date(`${shiftDate}T${shiftStartTime}:00`);
+    const endDate = new Date(`${shiftDate}T${shiftEndTime}:00`);
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime()) || endDate <= startDate) {
+      alert('Проверьте дату и время смены');
+      return;
+    }
+    const newShift = {
+      id: genId(),
+      start: startDate.toISOString(),
+      end: endDate.toISOString(),
+      fuelCost: parseFloat(shiftFuel) || 0,
+    };
+    setState(prev => ({ ...prev, shifts: [...prev.shifts, newShift] }));
+    setShowShiftModal(false);
+    setShiftDate(new Date().toISOString().slice(0,10));
+    setShiftStartTime('09:00');
+    setShiftEndTime('17:00');
+    setShiftFuel('');
   };
 
   const handleAddExpense = () => {
@@ -1233,9 +1270,26 @@ export default function CourierTracker() {
               ))}
             </div>
 
-            {/* Кнопка добавления расхода */}
-            {(filterType === 'week' || filterType === 'month') && (
-              <button onClick={() => setShowExpenseModal(true)} style={{
+            {/* Кнопка добавления расхода и смены */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {(filterType === 'week' || filterType === 'month') && (
+                <button onClick={() => setShowExpenseModal(true)} style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  padding: '10px',
+                  borderRadius: '10px',
+                  background: '#111111',
+                  border: '1px solid #27272a',
+                  color: '#22d3ee',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                }}>
+                  <Plus size={16} /> Добавить расход
+                </button>
+              )}
+              <button onClick={() => setShowShiftModal(true)} style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -1248,9 +1302,9 @@ export default function CourierTracker() {
                 cursor: 'pointer',
                 fontSize: '0.85rem',
               }}>
-                <Plus size={16} /> Добавить расход
+                <Calendar size={16} /> Добавить смену
               </button>
-            )}
+            </div>
 
             {/* Сводные карточки */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
@@ -1475,6 +1529,67 @@ export default function CourierTracker() {
           </div>
         )}
 
+        {tab === 'calendar' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Календарь смен</h2>
+            <button onClick={() => setShowShiftModal(true)} style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              padding: '10px',
+              borderRadius: '10px',
+              background: '#111111',
+              border: '1px solid #27272a',
+              color: '#22d3ee',
+              cursor: 'pointer',
+              fontSize: '0.85rem',
+            }}>
+              <Plus size={16} /> Добавить смену
+            </button>
+            {shifts.length === 0 ? (
+              <p style={{ textAlign: 'center', color: '#52525b', padding: '40px 0' }}>Нет смен</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {shifts
+                  .slice()
+                  .sort((a, b) => new Date(stripZ(b.start)) - new Date(stripZ(a.start)))
+                  .map(s => {
+                    const start = new Date(stripZ(s.start));
+                    const end = new Date(stripZ(s.end));
+                    const duration = (end - start) / 3600000;
+                    const isPast = end < new Date();
+                    return (
+                      <div key={s.id} style={{
+                        background: isPast ? '#111111' : '#1a1a2e',
+                        borderRadius: '12px',
+                        padding: '12px',
+                        border: `1px solid ${isPast ? '#27272a' : '#22d3ee'}`,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '8px',
+                      }}>
+                        <div>
+                          <div style={{ fontWeight: '600', fontSize: '0.9rem', color: isPast ? '#d4d4d8' : '#22d3ee' }}>
+                            {formatDate(s.start)}
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: '#71717a' }}>
+                            {formatTime(s.start)} – {formatTime(s.end)} · {duration.toFixed(1)} ч
+                          </div>
+                          {s.fuelCost > 0 && <div style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Топливо: {formatPLN(s.fuelCost)}</div>}
+                        </div>
+                        <button onClick={() => handleDeleteShift(s.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+        )}
+
         {tab === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Настройки</h2>
@@ -1567,6 +1682,7 @@ export default function CourierTracker() {
         <NavButton icon={<Plus size={22} />} label="Внести" active={tab === 'entry'} onClick={() => setTab('entry')} />
         <NavButton icon={<BarChart3 size={22} />} label="Статистика" active={tab === 'stats'} onClick={() => setTab('stats')} />
         <NavButton icon={<List size={22} />} label="История" active={tab === 'history'} onClick={() => setTab('history')} />
+        <NavButton icon={<Calendar size={22} />} label="Календарь" active={tab === 'calendar'} onClick={() => setTab('calendar')} />
         <NavButton icon={<SettingsIcon size={22} />} label="Настройки" active={tab === 'settings'} onClick={() => setTab('settings')} />
       </nav>
 
@@ -1648,6 +1764,57 @@ export default function CourierTracker() {
             </div>
             <button onClick={handleAddExpense} style={{ padding: '12px', borderRadius: '8px', background: '#10b981', color: '#022c22', border: 'none', fontWeight: '700', cursor: 'pointer' }}>
               Сохранить расход
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {showShiftModal && (
+        <Modal onClose={() => setShowShiftModal(false)}>
+          <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', marginTop: 0 }}>Добавить смену</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Дата</label>
+              <input
+                type="date"
+                value={shiftDate}
+                onChange={(e) => setShiftDate(e.target.value)}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Начало</label>
+                <input
+                  type="time"
+                  value={shiftStartTime}
+                  onChange={(e) => setShiftStartTime(e.target.value)}
+                  style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Конец</label>
+                <input
+                  type="time"
+                  value={shiftEndTime}
+                  onChange={(e) => setShiftEndTime(e.target.value)}
+                  style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+                />
+              </div>
+            </div>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: '#71717a', marginBottom: '6px', display: 'block' }}>Топливо (PLN)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={shiftFuel}
+                onChange={(e) => setShiftFuel(e.target.value)}
+                placeholder="0.00"
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#000000', border: '1px solid #3f3f46', color: '#fafafa', fontSize: '16px', boxSizing: 'border-box' }}
+              />
+            </div>
+            <button onClick={handleAddManualShift} style={{ padding: '12px', borderRadius: '8px', background: '#10b981', color: '#022c22', border: 'none', fontWeight: '700', cursor: 'pointer' }}>
+              Сохранить смену
             </button>
           </div>
         </Modal>
