@@ -1553,7 +1553,7 @@ const weekGroups = useMemo(() => {
           </div>
         )}
 
-        {tab === 'calendar' && (
+                {tab === 'calendar' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Календарь смен</h2>
             <button onClick={() => setShowShiftModal(true)} style={{
@@ -1575,95 +1575,73 @@ const weekGroups = useMemo(() => {
             {shifts.length === 0 ? (
               <p style={{ textAlign: 'center', color: '#52525b', padding: '40px 0' }}>Нет смен</p>
             ) : (
-              (() => {
-                const groups = new Map();
-                shifts.forEach(s => {
-                  const d = new Date(stripZ(s.start));
-                  const day = d.getDay() === 0 ? 7 : d.getDay();
-                  const monday = new Date(d);
-                  monday.setDate(d.getDate() - day + 1);
-                  monday.setHours(0,0,0,0);
-                  const key = monday.toISOString();
-                  if (!groups.has(key)) groups.set(key, []);
-                  groups.get(key).push(s);
-                });
-
-                const sortedWeeks = Array.from(groups.entries())
-                  .sort((a,b) => new Date(b[0]) - new Date(a[0]));
-
-                return sortedWeeks.map(([weekStart, weekShifts]) => {
-                  const weekEnd = new Date(new Date(weekStart).getTime() + 7*24*3600*1000);
-                  const totalHours = weekShifts.reduce((sum, s) => {
-                    return sum + (new Date(stripZ(s.end)) - new Date(stripZ(s.start))) / 3600000;
-                  }, 0);
-                  return (
-                    <div key={weekStart} style={{
-                      background: '#111111',
-                      borderRadius: '16px',
-                      padding: '16px',
-                      border: '1px solid #27272a',
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {weekGroups.map(group => (
+                  <div key={group.weekStart} style={{
+                    background: '#111111',
+                    borderRadius: '16px',
+                    padding: '16px',
+                    border: '1px solid #27272a',
+                  }}>
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: '12px',
                     }}>
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: '12px',
+                      <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#fafafa' }}>
+                        {formatDate(group.weekStart)} – {formatDate(new Date(group.weekEnd - 1))}
+                      </span>
+                      <span style={{
+                        fontSize: '0.85rem',
+                        color: '#22d3ee',
+                        fontWeight: '700',
                       }}>
-                        <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#fafafa' }}>
-                          {formatDate(weekStart)} – {formatDate(new Date(weekEnd - 1))}
-                        </span>
-                        <span style={{
-                          fontSize: '0.85rem',
-                          color: '#22d3ee',
-                          fontWeight: '700',
-                        }}>
-                          {totalHours.toFixed(1)} ч
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {weekShifts
-                          .slice()
-                          .sort((a,b) => new Date(stripZ(a.start)) - new Date(stripZ(b.start)))
-                          .map(s => {
-                            const start = new Date(stripZ(s.start));
-                            const end = new Date(stripZ(s.end));
-                            const duration = (end - start) / 3600000;
-                            const isPast = end < new Date();
-                            return (
-                              <div key={s.id} style={{
-                                background: isPast ? '#1a1a1a' : '#1a1a2e',
-                                borderRadius: '10px',
-                                padding: '10px',
-                                border: `1px solid ${isPast ? '#3f3f46' : '#22d3ee'}`,
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                gap: '8px',
-                              }}>
-                                <div>
-                                  <div style={{ fontWeight: '600', fontSize: '0.85rem', color: isPast ? '#d4d4d8' : '#22d3ee' }}>
-                                    {formatDate(s.start)}
-                                  </div>
-                                  <div style={{ fontSize: '0.75rem', color: '#71717a' }}>
-                                    {formatTime(s.start)} – {formatTime(s.end)} · {duration.toFixed(1)} ч
-                                  </div>
-                                  {s.fuelCost > 0 && <div style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Топливо: {formatPLN(s.fuelCost)}</div>}
-                                </div>
-                                <button onClick={() => handleDeleteShift(s.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            );
-                          })}
-                      </div>
+                        {group.totalHours.toFixed(1)} ч
+                      </span>
                     </div>
-                  );
-                });
-              })()
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {group.weekShifts
+                        .slice()
+                        .sort((a,b) => new Date(stripZ(a.start)) - new Date(stripZ(b.start)))
+                        .map(s => {
+                          const start = new Date(stripZ(s.start));
+                          const end = new Date(stripZ(s.end));
+                          const duration = (end - start) / 3600000;
+                          const isPast = end < new Date();
+                          return (
+                            <div key={s.id} style={{
+                              background: isPast ? '#1a1a1a' : '#1a1a2e',
+                              borderRadius: '10px',
+                              padding: '10px',
+                              border: `1px solid ${isPast ? '#3f3f46' : '#22d3ee'}`,
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              gap: '8px',
+                            }}>
+                              <div>
+                                <div style={{ fontWeight: '600', fontSize: '0.85rem', color: isPast ? '#d4d4d8' : '#22d3ee' }}>
+                                  {formatDate(s.start)}
+                                </div>
+                                <div style={{ fontSize: '0.75rem', color: '#71717a' }}>
+                                  {formatTime(s.start)} – {formatTime(s.end)} · {duration.toFixed(1)} ч
+                                </div>
+                                {s.fuelCost > 0 && <div style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Топливо: {formatPLN(s.fuelCost)}</div>}
+                              </div>
+                              <button onClick={() => handleDeleteShift(s.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}
-
         {tab === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: '600', margin: 0 }}>Настройки</h2>
