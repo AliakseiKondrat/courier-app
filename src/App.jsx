@@ -38,8 +38,8 @@ const DEFAULT_SETTINGS = {
   ryczaltRate: 0.085,
   uzRate: 0.277,
   zusFixed: 110,
-  transitionDate: '2026-09-01', // для Uber Eats
-  glovoUZStartDate: '2025-01-01', // дата перехода Glovo на UZ (настраиваемая)
+  transitionDate: '2026-09-01',
+  glovoUZStartDate: '2025-01-01',
   partnerCommissionSingle: 29.90,
   partnerCommissionMulti: 49.90,
   customServices: [],
@@ -160,7 +160,7 @@ export default function CourierTracker() {
   const { orders, shifts, expenses, settings } = state;
 
   const [tab, setTab] = useState('entry');
-  const [bruttoMode, setBruttoMode] = useState(true); // только для статистики
+  const [bruttoMode, setBruttoMode] = useState(true);
 
   const [filterType, setFilterType] = useState('week');
   const [customStart, setCustomStart] = useState('');
@@ -213,11 +213,11 @@ export default function CourierTracker() {
     return allServices.find(s => s.name === name) || { name, color: '#71717A', icon: '📦' };
   };
 
-  // Фильтрация заказов
-  const filteredOrders = useMemo(() => {
+  // Функция получения диапазона дат
+  const getRange = (type) => {
     const now = new Date();
     let start, end;
-    switch(filterType) {
+    switch(type) {
       case 'today':
         start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
         end = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1).toISOString();
@@ -247,6 +247,12 @@ export default function CourierTracker() {
         start = new Date(0).toISOString();
         end = new Date(8640000000000000).toISOString();
     }
+    return [start, end];
+  };
+
+  // Фильтрация заказов
+  const filteredOrders = useMemo(() => {
+    const [start, end] = getRange(filterType);
     return orders.filter(o => {
       const d = new Date(o.date).toISOString();
       const inDate = d >= start && d < end;
@@ -257,75 +263,13 @@ export default function CourierTracker() {
 
   // Фильтрация смен
   const filteredShifts = useMemo(() => {
-    const now = new Date();
-    let start, end;
-    switch(filterType) {
-      case 'today':
-        start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-        end = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1).toISOString();
-        break;
-      case 'week': {
-        const day = now.getDay();
-        const diff = day === 0 ? -6 : 1 - day;
-        const monday = new Date(now);
-        monday.setDate(now.getDate() + diff);
-        monday.setHours(0,0,0,0);
-        const sunday = new Date(monday);
-        sunday.setDate(monday.getDate()+7);
-        start = monday.toISOString();
-        end = sunday.toISOString();
-        break;
-      }
-      case 'month':
-        start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-        end = new Date(now.getFullYear(), now.getMonth()+1, 1).toISOString();
-        break;
-      case 'custom':
-        start = customStart ? new Date(customStart).toISOString() : new Date(0).toISOString();
-        end = customEnd ? new Date(customEnd).toISOString() : new Date(8640000000000000).toISOString();
-        break;
-      case 'all':
-      default:
-        start = new Date(0).toISOString();
-        end = new Date(8640000000000000).toISOString();
-    }
+    const [start, end] = getRange(filterType);
     return shifts.filter(s => s.start >= start && s.start < end);
   }, [shifts, filterType, customStart, customEnd]);
 
   // Фильтрация расходов
   const filteredExpenses = useMemo(() => {
-    const now = new Date();
-    let start, end;
-    switch(filterType) {
-      case 'today':
-        start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-        end = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1).toISOString();
-        break;
-      case 'week': {
-        const day = now.getDay();
-        const diff = day === 0 ? -6 : 1 - day;
-        const monday = new Date(now);
-        monday.setDate(now.getDate() + diff);
-        monday.setHours(0,0,0,0);
-        const sunday = new Date(monday);
-        sunday.setDate(monday.getDate()+7);
-        start = monday.toISOString();
-        end = sunday.toISOString();
-        break;
-      }
-      case 'month':
-        start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-        end = new Date(now.getFullYear(), now.getMonth()+1, 1).toISOString();
-        break;
-      case 'custom':
-        start = customStart ? new Date(customStart).toISOString() : new Date(0).toISOString();
-        end = customEnd ? new Date(customEnd).toISOString() : new Date(8640000000000000).toISOString();
-        break;
-      case 'all':
-      default:
-        start = new Date(0).toISOString();
-        end = new Date(8640000000000000).toISOString();
-    }
+    const [start, end] = getRange(filterType);
     return expenses.filter(e => e.date >= start && e.date < end);
   }, [expenses, filterType, customStart, customEnd]);
 
@@ -377,20 +321,17 @@ export default function CourierTracker() {
   // Рекорды
   const records = useMemo(() => {
     if (filteredOrders.length === 0) return null;
-    // Лучший день
     const byDay = {};
     filteredOrders.forEach(o => {
       const day = formatDate(o.date);
       byDay[day] = (byDay[day] || 0) + o.amount + (o.tips || 0);
     });
     const bestDay = Object.entries(byDay).sort((a,b) => b[1] - a[1])[0];
-    // Лучший сервис
     const byService = {};
     filteredOrders.forEach(o => {
       byService[o.service] = (byService[o.service] || 0) + o.amount + (o.tips || 0);
     });
     const bestService = Object.entries(byService).sort((a,b) => b[1] - a[1])[0];
-    // Максимальный заказ
     const maxOrder = filteredOrders.reduce((max, o) => {
       const val = o.amount + (o.tips || 0);
       return val > (max?.amount + (max?.tips || 0) || 0) ? o : max;
